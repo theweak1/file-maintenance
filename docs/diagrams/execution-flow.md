@@ -1,65 +1,75 @@
 ```mermaid 
 flowchart TD
-    A[Start Application] --> B[Parse CLI Flags]
-    B --> C[Load Config Files]
-    C --> D[Initialize Logger]
-    D --> E[Validate Configuration]
+  A[Start Application]
+  B[Parse CLI Flags]
+  C[Resolve default paths<br/>exeDir configs logs]
+  D[Build AppConfig from flags]
+  E[Initialize Logger]
+  F[Print stderr and Exit 1]
 
-    E -->|Invalid| F[Log Fatal Error]
-    F --> G[Exit Program]
+  A --> B
+  B --> C
+  C --> D
+  D --> E
+  E -->|Fail| F
 
-    E -->|Valid| H[Verify Backup Root Path if Enabled]
-    H -->|Not Accessible| F
-    H -->|Accessible| I[Read Folders List]
+  E -->|OK| G[app.Run]
 
-    I --> J[Start Maintenance Worker]
+  G --> H[Read folders.txt]
+  H -->|Fail| F
 
-    J --> K[Init context, queues, counters]
-    K --> K2[Capture run date folder DDMmmYY]
-    K --> L[Start SINGLE Processor Goroutine]
-    K --> M[Start BOUNDED Folder Walkers]
+  H --> I{Backups enabled}
+  I -->|No| J[Skip backup validation]
+  I -->|Yes| K[Read backup.txt]
+  K -->|Fail| F
+  K --> L[CheckBackupPath]
+  L -->|Fail| M[Log fatal and Exit]
+  L -->|OK| N[Start Worker]
 
-    M --> N{For each folder}
-    N --> O[Check folder exists]
-    O -->|Error| P[Log error and skip] --> N
-    O -->|OK| Q[Walk folder recursively]
+  J --> N
 
-    Q --> R{Entry type}
-    R -->|Directory| Q
-    R -->|File| S[Read file info]
+  N --> O[Init context queues counters]
+  O --> P[Start single processor]
+  O --> Q[Start bounded walkers]
 
-    S -->|Error| T[Log error] --> Q
-    S -->|OK| U{File older than retention?}
+  Q --> R[For each folder]
+  R --> S[Stat folder]
+  S -->|Error| T[Log error skip]
+  S -->|Not dir| T
+  S -->|OK| U[Walk folder]
 
-    U -->|No| Q
-    U -->|Yes| V[Enqueue FileJob]
+  U --> V[Read entry]
+  V -->|Directory| U
+  V -->|File| W[Read file info]
+  W -->|Error| U
+  W --> X{File older than retention}
+  X -->|No| U
+  X -->|Yes| Y[Enqueue FileJob]
 
-    L --> W{Job received}
-    W --> X[Build dst path: backupRoot/DDMmmYY/relative path]
-    X --> Y{Backup enabled?}
+  P --> Z[Receive job]
+  Z --> AA{Stop condition met}
+  AA -->|Yes| AB[Processor exits]
+  AA -->|No| AC[Build backup path<br/>adds date folder]
 
-    Y -->|Yes| Y2{Destination exists?}
-    Y2 -->|Yes| W
-    Y2 -->|No| Z[Copy file with retry]
+  AC --> AD{Backup enabled}
+  AD -->|No| AE[Delete file]
+  AD -->|Yes| AF{Backup exists}
+  AF -->|Yes| AE
+  AF -->|No| AG[Copy with retry]
 
-    Z -->|Fail| AA[Log error, skip delete] --> W
-    Z -->|Success| AB[Delete original file]
+  AG -->|Fail| Z
+  AG -->|Success| AE
 
-    Y -->|No| AB
+  AE -->|Fail| Z
+  AE -->|Success| AH[Increment per folder count]
+  AH --> AI[Cleanup empty dirs]
+  AI --> AJ[Increment processed count]
+  AJ --> Z
 
-    AB -->|Fail| AC[Log delete error] --> W
-    AB -->|Success| AD[Increment per-folder delete count]
-    AD --> AE[Cleanup empty directories]
-    AE --> AF[Increment global processed count]
-    AF --> W
-
-    M --> AG[Walkers finished]
-    AG --> AH[Close jobs channel]
-    AH --> AI[Processor exits after jobs drained]
-
-    AI --> AJ[Log per-folder COUNT totals]
-    AJ --> AK[Exit Successfully]
-
-
+  Q --> AK[Walkers finished]
+  AK --> AL[Close jobs channel]
+  AL --> AM[Processor drains and exits]
+  AM --> AN[Log per folder totals]
+  AN --> AO[Exit success]
 
 ```

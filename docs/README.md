@@ -36,9 +36,7 @@ The process follows a predictable and safe execution flow:
 
 3. **Maintenance Worker**
    - Initializes execution context, queues, and counters
-
    - Captures a run-specific backup date (DDMmmYY)
-
    - Starts:
      - Bounded folder walkers (discovery only)
      - A single processor goroutine (file operations)
@@ -47,10 +45,10 @@ The process follows a predictable and safe execution flow:
    - Eligible files are enqueued for processing
    - Backup destination path is built as:
 
-    ```shell
+    ```text
     backupRoot/DDMmmYY/relative-path
     ```
-    - Files are copied with retry + backoff 
+    - Files are copied using streaming I/O with retry + backoff 
     - Original files are deleted only after successful backup
     - Empty directories are cleaned bottom-up
 
@@ -89,7 +87,7 @@ The process follows a predictable and safe execution flow:
 |------|---------|-------------|
 | `-walkers` | `1` | Concurrent folder walkers |
 | `-queue-size` | `300` | Job queue size |
-| `-max-files` | `0` | Max files per run |
+| `-max-files` | `0` | Max files per run (0 = unlimited)|
 | `-max-runtime` | `30m` | Max runtime |
 | `-cooldown` | `0` | Cooldown between files |
 | `-retries` | `2` | Copy retries |
@@ -102,7 +100,9 @@ The process follows a predictable and safe execution flow:
 - 🗂 **Date-based backups**
   - One folder per run (`DDMmmYY`)
   - Preserves full relative directory structure
-- 🧠 **Path-safe backups** (prevents directory traversal)
+- 🧠 **Path-safe backups** 
+  - prevents directory traversal
+  - Rejects paths escaping the source root
 - 🧵 **Bounded concurrency**
   - Parallel folder scanning (configurable)
   - Serialized file operations (copy/delete one file at a time)
@@ -135,11 +135,12 @@ The process follows a predictable and safe execution flow:
     │   ├── folders.txt
     │   ├── backup.txt
     │   └── logging.json
-    └── build.ps1             # Helpers (exe path resolution, etc.)
+    └── build.ps1             # Helpers (Build, run, smoke, coverage helpers)
 
 ------------------------------------------------------------------------
 
-## ⚙️ Configuration Files (This Files are required in order for the program to run)
+## ⚙️ Configuration Files 
+These Files are required for the program to run
 
 ### `configs/folders.txt`
 
@@ -147,7 +148,7 @@ List of folders to process (one per line).
 
 #### Examples
 
-    ```md
+    ```text
     # Local temp files
     C:\Temp\OldFiles
 
@@ -155,22 +156,23 @@ List of folders to process (one per line).
     \\server\share\incoming
     ```
 
-- Empty lines and # comments are ignored.
+- Empty lines are ignored
+- Lines starting with `#` are treated as comments
 
 ### `configs/backup.txt`
 
 Backup destination root.
 
+```text
     \\server\share\backups
-
+```
 - If empty, defaults to ../backups relative to configs/
-
 - Path is validated and write-tested before any deletion occurs
 
 ### `configs/logging.json`
 
 Enable/disable log levels.
-
+```json
     {
         "DEBUG": false,
         "COUNT": true,
@@ -180,8 +182,8 @@ Enable/disable log levels.
         "SUCCESS": true,
         "FATAL": true
     }
-
-- COUNT is used for summary metrics (ex: deleted files per folder)
+```
+- `COUNT` is used for summary metrics (ex: deleted files per folder)
 - Unknown levels default to enabled (fail-open policy)
 
 ------------------------------------------------------------------------
@@ -192,12 +194,12 @@ Backups are written using a date-based folder structure that preserves the origi
 
 Destination format:
 
-```shell
+```text
     <backupRoot>/<DDMmmYY>/<relative folder structure>/<filename>
 ```
 
 Example:
-```shell
+```text
 Source file:
 C:\Data\Images\2024\Camera\IMG001.jpg
 
@@ -206,79 +208,63 @@ Backup destination:
 ```
 
 Why this design:
-
-- Keeps backups grouped per run/day
-
-- Preserves original folder structure for easy restore
-
-- Prevents filename collisions
-
-- Makes auditing and cleanup straightforward
-
-- The backup date folder is determined per run.
+    - Keeps backups grouped per run/day
+    - Preserves original folder structure for easy restore
+    - Prevents filename collisions
+    - Makes auditing and cleanup straightforward
+    - The backup date folder is determined per run.
 All files processed in the same run share the same DDMmmYY folder.
 
 ## 🚀 Usage
 
 ### Basic run
-
+```powershell
     fileMaintenance.exe -days 7
-
+```
 Deletes files older than 7 days (after backing them up).
 
 ### Disable backups (⚠️ dangerous)
-
+```powershell
     fileMaintenance.exe -days 7 -no-backup
-
+```
 Deletes files without backup. Use only intentionally.
 
 ### Resource-controlled run (recommended)
-
+```powershell
     fileMaintenance.exe -days 7 -walkers 1 -queue-size 300 -max-files 2500 -max-runtime 30m -cooldown 50ms -retries 2
-
+```
 Ideal for:
-
-- busy workstations
-
-- large image sets
-
-- network (SMB) destinations
+  - busy workstations
+  - large image sets
+  - network (SMB) destinations
 
 ### Console-only logging
-
+```powershell
     fileMaintenance.exe -days 0 -no-logs
-
+```
 ------------------------------------------------------------------------
 
 ## 🧠 Concurrency Model (Important)
 
 - Folder scanning
 Parallel, bounded by `-walkers` (default: 1)
-
 - File operations (copy + delete)
 **always serialized** (one file at a time)
 
 Why:
-
-- Prevents SMB saturation
-
-- Keeps CPU + disk usage predictable
-
-- Safer for large files (images, media)
+    - Prevents SMB saturation
+    - Keeps CPU + disk usage predictable
+    - Safer for large files (images, media)
 
 ------------------------------------------------------------------------
 
 ## 🧹 Empty Directory Cleanup
 
 After a file is deleted:
-
-- Parent directories are removed only if empty
-
-- Cleanup proceeds bottom-up
-
-- Deletion never crosses the configured folder root
-
-- Path comparisons are Windows-safe (case-insensitive)
+  - Parent directories are removed **only if empty**
+  - Cleanup proceeds bottom-up
+  - Deletion never crosses the configured folder root
+  - Path comparisons are Windows-safe (case-insensitive)
 
 This keeps folder trees tidy without risk
 
@@ -288,25 +274,22 @@ This keeps folder trees tidy without risk
 
 ### File mode (default)
 
-- logs/maintenance_YYYY-MM-DD.log (all levels)
-
-- logs/errors_YYYY-MM-DD.log (ERROR only)
-
-- logs/count_YYYY-MM-DD.log (COUNT only — summary totals like “files deleted per folder”)
+- logs/maintenance_YYYY-MM-DD.log - all levels
+- logs/errors_YYYY-MM-DD.log - ERROR only
+- logs/count_YYYY-MM-DD.log - COUNT only — (summary totals)
 
 > [!NOTE]
-> Per-folder delete counts are logged after the run finishes, so counts stay accurate even when walking finishes before processing.
+> Per-folder delete counts are logged after the run finishes, so totals remain accurate.
 
 ### Console mode
 
-- Enabled with -no-logs
-
+- Enabled with `-no-logs`
 - Useful for development and smoke tests
 
 Log retention
-
+```text
     log-retention 30
-
+```
 Deletes log files older than N days (best-effort, non-fatal).
 
 ------------------------------------------------------------------------
@@ -318,48 +301,39 @@ Deletes log files older than N days (best-effort, non-fatal).
 - Twice daily (e.g., 6:30 AM / 6:30 PM)
 
 Example launch command:
-
+```powershell
     powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
     Start-Process -FilePath "C:\path\fileMaintenance.exe" `
     -ArgumentList "-days 7 -walkers 1 -max-runtime 30m -cooldown 50ms" `
     -Priority BelowNormal -WindowStyle Hidden -Wait
-
-Task options
-
-- ✅ Run whether user is logged on or not
-
-- ✅ Run as soon as possible after a missed start
-
-- ✅ Stop task if running longer than 1 hour
+```
+Task options:
+  - ✅ Run whether user is logged on or not
+  - ✅ Run as soon as possible after a missed start
+  - ✅ Stop task if running longer than 1 hour
 
 ------------------------------------------------------------------------
 
 ## 🔐 Safety Guarantees
 
 This tool is designed to fail safe:
-
-- ❌ No deletion if backup root is inaccessible or backup copy fails
-
-- ❌ No path traversal outside backup root
-
-- ❌ No directory deletion above configured folder root
-
-- ❌ No unbounded goroutines or memory growth
-
-- ✅ Network hiccups handled with retries + backoff
+  - ❌ No deletion if backup root is inaccessible 
+  - ❌ No deletion if backup copy fails
+  - ❌ No path traversal outside backup root
+  - ❌ No directory deletion above configured folder root
+  - ❌ No unbounded goroutines or memory growth
+  - ✅ Network hiccups handled with retries + backoff
 
 ------------------------------------------------------------------------
 
 ## 🧪 Development & Testing
 
 ### Smoke test
-
+```powershell
     .\build.ps1 smoke
-
+```
 - Builds the binary
-
-- Runs with -no-logs
-
+- Runs with `-no-logs`
 - Verifies configs exist
 
 ------------------------------------------------------------------------
