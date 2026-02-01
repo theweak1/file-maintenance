@@ -1,0 +1,64 @@
+# =========================
+# Go build artifacts
+# =========================
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+/go.work
+/go.work.sum
+
+# =========================
+# OS / Editor junk
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+# Logs (runtime-generated)
+# =========================
+logs/
+*.log
+
+# =========================
+# Runtime data / state
+# =========================
+backup/
+output/
+tmp/
+temp/
+
+# =========================
+# Config files (local only)
+# =========================
+config/*.local.json
+config/*.local.yaml
+config/*.local.toml
+
+# Example: real config generated on machine
+logging.json
+folders.txt
+backup.txt
+
+# =========================
+# Test artifacts
+# =========================
+coverage.out
+coverage.html
+
+# =========================
+# Windows Scheduled Task leftovers
+# =========================
+*.job
+*.task
