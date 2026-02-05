@@ -58,7 +58,9 @@ The process follows a predictable and safe execution flow:
 
 ---
 
-![Execution Flow](diagrams/execution-flow.svg)
+<!-- ![Execution Flow](diagrams/execution-flow.svg) -->
+![Execution Flow](diagrams/execution-flow-high-level.svg)
+
 > The execution flow reflects a **single-processor design** for file operations:
 > folder scanning may be concurrent, but backup and deletion always occur one file at a time.
 > Backups are grouped under a per-run date folder (`DDMmmYY`).
@@ -164,6 +166,7 @@ C:\Temp\OldFiles
 
     # Network location
 \\server\share\incoming
+```
 
 # Specific files - delete only these exact files
 C:\Data\Images\old-photo.jpg
@@ -285,7 +288,7 @@ This keeps folder trees tidy without risk
 
 ------------------------------------------------------------------------
 
-## 🪵 Logging
+## 🗃️ Logging
 
 ### File mode (default)
 
@@ -293,7 +296,7 @@ This keeps folder trees tidy without risk
 - logs/errors_YYYY-MM-DD.log - ERROR only
 - logs/count_YYYY-MM-DD.log - COUNT only — (summary totals)
 
-> [!NOTE]
+> [NOTE]
 > Per-folder delete counts are logged after the run finishes, so totals remain accurate.
 
 ### Console mode
