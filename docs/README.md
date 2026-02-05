@@ -115,7 +115,7 @@ The process follows a predictable and safe execution flow:
 - 🧹 **Automatic cleanup**
   - Deletes empty directories (bottom-up, safe boundary)
   - Log retention management
-- 🪵 **Configurable logging**
+- 🗃️ **Configurable logging**
   - File logging or console-only (`-no-logs`)
   - Per-level enable/disable via `logging.json`
 
