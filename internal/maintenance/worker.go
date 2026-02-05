@@ -267,14 +267,32 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 				return
 			}
 
-			// Validate folder exists and is a directory before walking.
+			// Validate path exists.
 			fi, err := os.Stat(folder)
 			if err != nil {
-				log.Errorf("Error accessing folder %s: %v", folder, err)
+				log.Errorf("Error accessing path %s: %v", folder, err)
 				return
 			}
+
+			// Handle file paths directly (not directories).
+			// This allows users to specify individual files in folders.txt.
 			if !fi.IsDir() {
-				log.Warnf("Path is not a directory, skipping: %s", folder)
+				// Check if the file is old enough to be deleted.
+				if !IsFileOlder(fi, cfg.Days) {
+					log.Debugf("File is not old enough, skipping: %s", folder)
+					return
+				}
+
+				// For file paths, use the parent directory as folderRoot for counting.
+				folderRoot := filepath.Dir(folder)
+
+				// Enqueue the file directly for processing.
+				select {
+				case <-ctx.Done():
+					return
+				case jobs <- FileJob{srcPath: folder, folderRoot: folderRoot}:
+				}
+				log.Infof("Queued file for deletion: %s", folder)
 				return
 			}
 

@@ -7,23 +7,35 @@ import (
 	"strings"
 )
 
-// ReadFolderList reads the list of folders to process from `folders.txt`.
+// ReadFolderList reads the list of paths to process from `folders.txt`.
 //
 // Contract:
-// - One folder path per line
+// - One path per line (can be a file OR a folder)
 // - Empty lines are ignored
 // - Lines starting with '#' are treated as comments
 //
 // This allows operators to temporarily disable folders or add notes
 // without changing code or redeploying the binary.
+// Path handling:
+// - Folders: All files inside the folder (recursively) that meet age criteria are processed.
+// - Files: The individual file is processed directly if it meets age criteria.
+//
+// This allows operators to:
+// - Delete all old files from a folder (just specify the folder path)
+// - Delete specific files (just specify the full file path)
+// - Temporarily disable paths or add notes without changing code
 //
 // Example folders.txt:
 //
-//	# Local temp files
+//	# Delete all old files from these folders
 //	C:\temp\old
 //
 //	# Network share
 //	\\server\share\incoming
+//
+//	# Delete specific files
+//	C:\Data\Images\old-photo.jpg
+//	C:\Logs\debug.log
 //
 // Errors:
 //   - Returns an error if folders.txt cannot be read.

@@ -32,44 +32,48 @@ flowchart TD
   O --> P[Start single processor]
   O --> Q[Start bounded walkers]
 
-  Q --> R[For each folder]
-  R --> S[Stat folder]
+  Q --> R[For each path in folders.txt]
+  R --> S[Stat path]
   S -->|Error| T[Log error skip]
-  S -->|Not dir| T
-  S -->|OK| U[Walk folder]
+  S -->|Is File| U[Check file age]
+  S -->|Is Directory| V[Walk folder]
 
-  U --> V[Read entry]
-  V -->|Directory| U
-  V -->|File| W[Read file info]
-  W -->|Error| U
-  W --> X{File older than retention}
-  X -->|No| U
-  X -->|Yes| Y[Enqueue FileJob]
+  U -->|Not old enough| W[Skip]
+  U -->|Old enough| X[Enqueue FileJob with parent dir as folderRoot]
+  X --> W
 
-  P --> Z[Receive job]
-  Z --> AA{Stop condition met}
-  AA -->|Yes| AB[Processor exits]
-  AA -->|No| AC[Build backup path<br/>adds date folder]
+  V --> Y[Read entry]
+  Y -->|Directory| V
+  Y -->|File| Z[Read file info]
+  Z -->|Error| V
+  Z --> AA{File older than retention}
+  AA -->|No| V
+  AA -->|Yes| AB[Enqueue FileJob]
 
-  AC --> AD{Backup enabled}
-  AD -->|No| AE[Delete file]
-  AD -->|Yes| AF{Backup exists}
-  AF -->|Yes| AE
-  AF -->|No| AG[Copy with retry]
+  P --> AC[Receive job]
+  AC --> AD{Stop condition met}
+  AD -->|Yes| AE[Processor exits]
+  AD -->|No| AF[Build backup path<br/>adds date folder]
 
-  AG -->|Fail| Z
-  AG -->|Success| AE
+  AF --> AG{Backup enabled}
+  AG -->|No| AH[Delete file]
+  AG -->|Yes| AI{Backup exists}
+  AI -->|Yes| AH
+  AI -->|No| AJ[Copy with retry]
 
-  AE -->|Fail| Z
-  AE -->|Success| AH[Increment per folder count]
-  AH --> AI[Cleanup empty dirs]
-  AI --> AJ[Increment processed count]
-  AJ --> Z
+  AJ -->|Fail| AC
+  AJ -->|Success| AH
 
-  Q --> AK[Walkers finished]
-  AK --> AL[Close jobs channel]
-  AL --> AM[Processor drains and exits]
-  AM --> AN[Log per folder totals]
-  AN --> AO[Exit success]
+  AH -->|Fail| AC
+  AH -->|Success| AK[Increment per folder count]
+  AK --> AL[Cleanup empty dirs]
+  AL --> AM[Increment processed count]
+  AM --> AC
+
+  Q --> AN[Walkers finished]
+  AN --> AO[Close jobs channel]
+  AO --> AP[Processor drains and exits]
+  AP --> AQ[Log per folder totals]
+  AQ --> AR[Exit success]
 
 ```

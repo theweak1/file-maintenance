@@ -144,20 +144,35 @@ These Files are required for the program to run
 
 ### `configs/folders.txt`
 
-List of folders to process (one per line).
+List of folders **or individual files** to process (one per line).
+
+#### Path Types Supported
+
+| Type | Description | Example |
+|------|-------------|---------|
+| **Folder** | All files inside the folder (recursively) are evaluated | `C:\Temp\OldFiles` |
+| **File** | The specific file is evaluated directly | `C:\Data\Images\old-photo.jpg` |
 
 #### Examples
 
+```text
+# Folders - delete all old files from these locations
+C:\Temp\OldFiles
     ```text
     # Local temp files
     C:\Temp\OldFiles
 
     # Network location
-    \\server\share\incoming
-    ```
+\\server\share\incoming
+
+# Specific files - delete only these exact files
+C:\Data\Images\old-photo.jpg
+C:\Logs\debug.log
+```
 
 - Empty lines are ignored
 - Lines starting with `#` are treated as comments
+- Individual files must meet the age criteria (unless `-days 0` is used)
 
 ### `configs/backup.txt`
 
