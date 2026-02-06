@@ -378,7 +378,7 @@ func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConf
 	close(jobs)
 	procWG.Wait()
 
-	// Accurate per-folder reporting happens AFTER processing finishes.
+	// Accurate per-path reporting happens AFTER processing finishes.
 	perFolderMu.Lock()
 	for _, pathConfig := range pathConfigs {
 		count := deletedByFolder[pathConfig.Path]
@@ -387,9 +387,8 @@ func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConf
 		} else {
 			if count > 0 {
 				log.Successf("File deleted: %s", pathConfig.Path)
-			} else {
-				log.Debugf("File not deleted (did not meet criteria): %s", pathConfig.Path)
 			}
+			// Note: Files that don't meet criteria are logged earlier (during scanning)
 		}
 	}
 	perFolderMu.Unlock()
