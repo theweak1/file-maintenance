@@ -6,6 +6,17 @@ import (
 	"file-maintenance/internal/logging"
 )
 
+// PathConfig represents a path entry from paths.txt with its associated backup setting.
+//
+// Format: path, yes|no (comma-separated)
+// - path: the file or folder to process
+// - backup: "yes" to enable backup, "no" to disable backup for this path
+type PathConfig struct {
+	Path   string
+	Backup bool
+	IsDir  bool
+}
+
 // AppConfig is the central configuration object for the application.
 //
 // It is constructed once in main(), passed through app.Run(), and then shared

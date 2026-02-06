@@ -34,6 +34,10 @@ type FileJob struct {
 	//  1) buildBackupPath() needs it to compute a relative path and preserve folder structure in backups
 	//  2) per-folder deletion counting needs a stable key (folderRoot) for accurate reporting
 	folderRoot string
+
+	// backup indicates whether this file should be backed up before deletion.
+	// This is set based on the path's configuration in paths.txt.
+	backup bool
 }
 
 // Worker scans configured folders, selects "old" files (based on cfg.Days),
@@ -61,7 +65,7 @@ type FileJob struct {
 //     (regardless of whether delete succeeded). It exists for stop conditions/reporting.
 //   - deletedByFolder is PER-FOLDER and increments ONLY when a delete succeeds.
 //   - Per-folder counts are logged AFTER all processing finishes so totals are accurate.
-func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *logging.Logger) error {
+func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConfig, log *logging.Logger) error {
 	log.Info("Starting maintenance worker")
 
 	// -------------------------------------------------------------------------
@@ -179,10 +183,10 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 				continue
 			}
 
-			// Backup phase (unless disabled):
+			// Backup phase (unless disabled for this path):
 			// - If destination already exists, skip backup to avoid overwriting.
 			// - Otherwise copy with retries/backoff to tolerate transient issues (SMB hiccups, locks, etc.).
-			if !cfg.NoBackup {
+			if job.backup {
 				if DoesFileExist(dstPath) {
 					log.Warnf("File already exists in backup, skipping: %s", dstPath)
 				} else {
@@ -246,13 +250,14 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 	sem := make(chan struct{}, cfg.Walkers)
 	var walkWG sync.WaitGroup
 
-	for _, folder := range folders {
+	for _, pathConfig := range pathConfigs {
 		// Avoid launching new walkers once stop conditions are met.
 		if shouldStop() {
 			break
 		}
 
-		folder := folder // capture loop variable for the goroutine
+		folder := pathConfig.Path
+		backupEnabled := pathConfig.Backup
 
 		// Acquire a slot (blocks if cfg.Walkers walkers already running).
 		sem <- struct{}{}
@@ -290,7 +295,7 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 				select {
 				case <-ctx.Done():
 					return
-				case jobs <- FileJob{srcPath: folder, folderRoot: folderRoot}:
+				case jobs <- FileJob{srcPath: folder, folderRoot: folderRoot, backup: backupEnabled}:
 				}
 				log.Infof("Queued file for deletion: %s", folder)
 				return
@@ -341,7 +346,7 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 				select {
 				case <-ctx.Done():
 					return context.Canceled
-				case jobs <- FileJob{srcPath: path, folderRoot: folder}:
+				case jobs <- FileJob{srcPath: path, folderRoot: folder, backup: backupEnabled}:
 				}
 
 				return nil
@@ -375,8 +380,17 @@ func Worker(folders []string, backupRoot string, cfg types.AppConfig, log *loggi
 
 	// Accurate per-folder reporting happens AFTER processing finishes.
 	perFolderMu.Lock()
-	for _, folder := range folders {
-		log.Countf("Amount of files deleted from %s: %d", folder, deletedByFolder[folder])
+	for _, pathConfig := range pathConfigs {
+		count := deletedByFolder[pathConfig.Path]
+		if pathConfig.IsDir {
+			log.Countf("Amount of files deleted from folder %s: %d", pathConfig.Path, count)
+		} else {
+			if count > 0 {
+				log.Successf("File deleted: %s", pathConfig.Path)
+			} else {
+				log.Debugf("File not deleted (did not meet criteria): %s", pathConfig.Path)
+			}
+		}
 	}
 	perFolderMu.Unlock()
 

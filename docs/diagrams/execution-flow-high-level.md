@@ -1,10 +1,10 @@
 ```mermaid
 flowchart TD
-    A[Start] --> B[Load Config]
-    B --> C{Backup Enabled?}
-    C -->|No| D[Delete Only Mode]
+    A[Start] --> B[Load Config<br/>Read paths.txt]
+    B --> C{Any Path Has<br/>Backup Enabled?}
+    C -->|No| D[Delete Only Mode<br/>No backup validation]
     C -->|Yes| E[Validate Backup Path]
-    E -->|Valid| F[Backup Then Delete]
+    E -->|Valid| F[Worker: Backup Per-Path]
     E -->|Invalid| G[Exit with Error]
     
     D --> H[Cleanup Logs]

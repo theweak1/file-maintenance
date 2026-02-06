@@ -34,7 +34,7 @@ func main() {
 	// -----------------------------------------------------------------------------
 	// Default locations relative to the app root.
 	//
-	// - configs/ holds folders.txt, backup.txt, logging.json, etc.
+	// - configs/ holds paths.txt, backup.txt, logging.json, etc.
 	// - logs/ is where the logger writes log files (unless -no-logs is set)
 	// -----------------------------------------------------------------------------
 	defaultLogDir := filepath.Join(root, "logs")
@@ -55,9 +55,6 @@ func main() {
 	var (
 		// Retention policy for candidate files (only files older than this are processed).
 		days = flag.Int("days", 7, "Number of days to retain files")
-
-		// If set, skip backup and delete directly. Use with caution.
-		noBackup = flag.Bool("no-backup", false, "If set, files will be deleted without backup")
 
 		// Retention policy for *log files* (housekeeping).
 		logRetention = flag.Int("log-retention", 30, "Number of days to retain log files")
@@ -92,7 +89,6 @@ func main() {
 	// -----------------------------------------------------------------------------
 	cfg := types.AppConfig{
 		Days:         *days,
-		NoBackup:     *noBackup,
 		ConfigDir:    *configDir,
 		LogRetention: *logRetention,
 
@@ -133,7 +129,7 @@ func main() {
 	// Run the application.
 	//
 	// app.Run() is responsible for:
-	// - reading configs (folders list, backup root, logging settings)
+	// - reading configs (paths list, backup root, logging settings)
 	// - pruning old logs (if logging enabled)
 	// - calling maintenance.Worker() to process eligible files
 	// -----------------------------------------------------------------------------

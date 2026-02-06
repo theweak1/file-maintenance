@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"file-maintenance/internal/types"
 )
 
 // Worker integration tests
@@ -19,13 +21,13 @@ func TestWorker_Integration_Table(t *testing.T) {
 	tests := []struct {
 		name           string
 		fileAgeDays    int
-		noBackup       bool
+		backupEnabled  bool
 		expectDeleted  bool
 		expectBackedUp bool
 	}{
-		{"old file + backup", 10, false, true, true},
-		{"old file + no backup", 10, true, true, false},
-		{"recent file untouched", 1, false, false, false},
+		{"old file + backup", 10, true, true, true},
+		{"old file + no backup", 10, false, true, false},
+		{"recent file untouched", 1, true, false, false},
 	}
 
 	for _, tt := range tests {
@@ -33,7 +35,6 @@ func TestWorker_Integration_Table(t *testing.T) {
 			root, src, backup := newSandbox(t)
 			cfg, log := newTestCfgAndLogger(t, root)
 
-			cfg.NoBackup = tt.noBackup
 			cfg.Days = 5
 			cfg.Walkers = 1
 			cfg.QueueSize = 10
@@ -43,7 +44,11 @@ func TestWorker_Integration_Table(t *testing.T) {
 			mustWriteFile(t, target, "hello")
 			mustSetAgeDays(t, target, tt.fileAgeDays)
 
-			if err := Worker([]string{src}, backup, cfg, log); err != nil {
+			pathConfigs := []types.PathConfig{
+				{Path: src, Backup: tt.backupEnabled, IsDir: true},
+			}
+
+			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -69,11 +74,11 @@ func TestWorker_Integration_Table(t *testing.T) {
 func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 	tests := []struct {
 		name              string
-		noBackup          bool
+		backupEnabled     bool
 		expectOldBackedUp bool
 	}{
-		{"backup enabled", false, true},
-		{"no backup", true, false},
+		{"backup enabled", true, true},
+		{"no backup", false, false},
 	}
 
 	for _, tt := range tests {
@@ -81,7 +86,6 @@ func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 			root, src, backup := newSandbox(t)
 			cfg, log := newTestCfgAndLogger(t, root)
 
-			cfg.NoBackup = tt.noBackup
 			cfg.Days = 5
 
 			oldPath := filepath.Join(src, "old.txt")
@@ -93,7 +97,11 @@ func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 			mustSetAgeDays(t, oldPath, 10) // old enough => candidate
 			mustSetAgeDays(t, newPath, 1)  // too new => must remain
 
-			if err := Worker([]string{src}, backup, cfg, log); err != nil {
+			pathConfigs := []types.PathConfig{
+				{Path: src, Backup: tt.backupEnabled, IsDir: true},
+			}
+
+			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -119,11 +127,11 @@ func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 	tests := []struct {
 		name           string
-		noBackup       bool
+		backupEnabled  bool
 		expectBackedUp bool
 	}{
-		{"backup enabled", false, true},
-		{"no backup", true, false},
+		{"backup enabled", true, true},
+		{"no backup", false, false},
 	}
 
 	for _, tt := range tests {
@@ -131,7 +139,6 @@ func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 			root, src, backup := newSandbox(t)
 			cfg, log := newTestCfgAndLogger(t, root)
 
-			cfg.NoBackup = tt.noBackup
 			cfg.Days = 5
 
 			nestedDir := filepath.Join(src, "sub", "deep")
@@ -141,7 +148,11 @@ func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 			mustWriteFile(t, target, "Hello")
 			mustSetAgeDays(t, target, 10)
 
-			if err := Worker([]string{src}, backup, cfg, log); err != nil {
+			pathConfigs := []types.PathConfig{
+				{Path: src, Backup: tt.backupEnabled, IsDir: true},
+			}
+
+			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -163,11 +174,11 @@ func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 
 func TestWorker_Integration_MultipleFolders(t *testing.T) {
 	tests := []struct {
-		name     string
-		noBackup bool
+		name          string
+		backupEnabled bool
 	}{
-		{"backup enabled", false},
-		{"no backup", true},
+		{"backup enabled", true},
+		{"no backup", false},
 	}
 
 	for _, tt := range tests {
@@ -184,7 +195,6 @@ func TestWorker_Integration_MultipleFolders(t *testing.T) {
 
 			cfg, log := newTestCfgAndLogger(t, root)
 			cfg.Days = 5
-			cfg.NoBackup = tt.noBackup
 
 			f1 := filepath.Join(src1, "a.txt")
 			f2 := filepath.Join(src2, "b.txt")
@@ -193,7 +203,12 @@ func TestWorker_Integration_MultipleFolders(t *testing.T) {
 			mustSetAgeDays(t, f1, 10)
 			mustSetAgeDays(t, f2, 10)
 
-			if err := Worker([]string{src1, src2}, backup, cfg, log); err != nil {
+			pathConfigs := []types.PathConfig{
+				{Path: src1, Backup: tt.backupEnabled, IsDir: true},
+				{Path: src2, Backup: tt.backupEnabled, IsDir: true},
+			}
+
+			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -208,15 +223,15 @@ func TestWorker_Integration_MaxFiles_Table(t *testing.T) {
 	// concurrency / buffering. These tests assert an upper bound (<=) rather than an exact count.
 	tests := []struct {
 		name              string
-		noBackup          bool
+		backupEnabled     bool
 		maxFiles          int
 		totalOldFiles     int
 		expectDeletedMax  int // at most this many should be deleted
 		expectBackedUpMax int // at most this many backups should exist (when backup enabled)
 	}{
-		{"backup enabled stops at 1", false, 1, 3, 1, 1},
-		{"no-backup stops at 1", true, 1, 3, 1, 0},
-		{"backup enabled stops at 2", false, 2, 5, 2, 2},
+		{"backup enabled stops at 1", true, 1, 3, 1, 1},
+		{"no-backup stops at 1", false, 1, 3, 1, 0},
+		{"backup enabled stops at 2", true, 2, 5, 2, 2},
 	}
 
 	for _, tt := range tests {
@@ -224,7 +239,6 @@ func TestWorker_Integration_MaxFiles_Table(t *testing.T) {
 			root, src, backup := newSandbox(t)
 			cfg, log := newTestCfgAndLogger(t, root)
 
-			cfg.NoBackup = tt.noBackup
 			cfg.Days = 5
 			cfg.MaxFiles = tt.maxFiles
 			cfg.Walkers = 1
@@ -238,7 +252,11 @@ func TestWorker_Integration_MaxFiles_Table(t *testing.T) {
 				mustSetAgeDays(t, p, 10)
 			}
 
-			if err := Worker([]string{src}, backup, cfg, log); err != nil {
+			pathConfigs := []types.PathConfig{
+				{Path: src, Backup: tt.backupEnabled, IsDir: true},
+			}
+
+			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -266,7 +284,6 @@ func TestWorker_Integration_MaxRuntime_StopsEarly(t *testing.T) {
 	cfg, log := newTestCfgAndLogger(t, root)
 
 	cfg.Days = 5
-	cfg.NoBackup = true
 	cfg.MaxRuntime = 10 * time.Millisecond
 	cfg.Walkers = 1
 	cfg.QueueSize = 10
@@ -278,7 +295,11 @@ func TestWorker_Integration_MaxRuntime_StopsEarly(t *testing.T) {
 		mustSetAgeDays(t, p, 10)
 	}
 
-	if err := Worker([]string{src}, backup, cfg, log); err != nil {
+	pathConfigs := []types.PathConfig{
+		{Path: src, Backup: false, IsDir: true},
+	}
+
+	if err := Worker(pathConfigs, backup, cfg, log); err != nil {
 		t.Fatalf("worker error: %v", err)
 	}
 

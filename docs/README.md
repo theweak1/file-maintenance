@@ -2,9 +2,9 @@
 
 A **safe, scheduled file maintenance utility** for Windows that:
 
-- Scans configured folders
+- Scans configured paths
 - Identifies files older than a given number of days
-- Optionally backs them up to a local or network location
+- Optionally backs them up to a local or network location (per-path setting)
 - Deletes the original files
 - Cleans up empty directories
 - Manages log retention
@@ -30,15 +30,15 @@ The process follows a predictable and safe execution flow:
    - Critical paths are validated
 
 2. **Safety Checks**
-   - Ensures target folders exist
-   - Verifies backup destination is accessible
+   - Ensures target paths exist
+   - Verifies backup destination is accessible (if any paths have backup enabled)
    - Terminates early on fatal misconfiguration
 
 3. **Maintenance Worker**
    - Initializes execution context, queues, and counters
    - Captures a run-specific backup date (DDMmmYY)
    - Starts:
-     - Bounded folder walkers (discovery only)
+     - Bounded path walkers (discovery only)
      - A single processor goroutine (file operations)
 
 4. **Backup & Cleanup**
@@ -48,9 +48,9 @@ The process follows a predictable and safe execution flow:
     ```text
     backupRoot/DDMmmYY/relative-path
     ```
-    - Files are copied using streaming I/O with retry + backoff 
-    - Original files are deleted only after successful backup
-    - Empty directories are cleaned bottom-up
+   - Files are copied using streaming I/O with retry + backoff
+   - Original files are deleted only after successful backup (unless backup is disabled for that path)
+   - Empty directories are cleaned bottom-up
 
 1. **Logging & Exit**
    - All actions are logged (success, warning, error)
@@ -62,7 +62,7 @@ The process follows a predictable and safe execution flow:
 ![Execution Flow](diagrams/execution-flow-high-level.svg)
 
 > The execution flow reflects a **single-processor design** for file operations:
-> folder scanning may be concurrent, but backup and deletion always occur one file at a time.
+> path scanning may be concurrent, but backup and deletion always occur one file at a time.
 > Backups are grouped under a per-run date folder (`DDMmmYY`).
 
 ## 🚩 Command-Line Flags
@@ -72,7 +72,6 @@ The process follows a predictable and safe execution flow:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-days` | `7` | Only files older than this many days are eligible for deletion |
-| `-no-backup` | `false` | Delete files without backup |
 | `-log-retention` | `30` | Log retention in days |
 
 ### Paths & Configuration
@@ -87,7 +86,7 @@ The process follows a predictable and safe execution flow:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-walkers` | `1` | Concurrent folder walkers |
+| `-walkers` | `1` | Concurrent path walkers |
 | `-queue-size` | `300` | Job queue size |
 | `-max-files` | `0` | Max files per run (0 = unlimited)|
 | `-max-runtime` | `30m` | Max runtime |
@@ -98,15 +97,15 @@ The process follows a predictable and safe execution flow:
 
 ## ✨ Key Features
 
-- ✅ **Backup before delete** (default, strongly recommended)
+- ✅ **Backup before delete** (configurable per-path)
 - 🗂 **Date-based backups**
   - One folder per run (`DDMmmYY`)
   - Preserves full relative directory structure
-- 🧠 **Path-safe backups** 
+- 🧠 **Path-safe backups**
   - prevents directory traversal
   - Rejects paths escaping the source root
 - 🧵 **Bounded concurrency**
-  - Parallel folder scanning (configurable)
+  - Parallel path scanning (configurable)
   - Serialized file operations (copy/delete one file at a time)
 - 🌐 **Network-friendly**
   - Streaming file copy (low RAM)
@@ -118,74 +117,90 @@ The process follows a predictable and safe execution flow:
 - 🗃️ **Configurable logging**
   - File logging or console-only (`-no-logs`)
   - Per-level enable/disable via `logging.json`
+- 🎯 **Per-path backup control**
+  - Each path can have backup enabled or disabled independently
+  - Controlled via `paths.txt` with simple `yes/no` syntax
 
 ------------------------------------------------------------------------
 
 ## 📁 Project Structure
 
+```
     .
     ├── cmd/
     │   └── main/              # CLI entry point
     ├── internal/
     │   ├── app/               # High-level application orchestration
-    │   ├── config/            # Reading folders.txt, backup.txt, logging.json
+    │   ├── config/            # Reading paths.txt, backup.txt, logging.json
     │   ├── logging/           # Thread-safe logger
     │   ├── maintenance/       # Core logic (scan, backup, delete, cleanup)
     │   ├── types/             # AppConfig definition
     │   └── utils/             # Helpers (exe path resolution, etc.)
     ├── configs/
-    │   ├── folders.txt
+    │   ├── paths.txt          # Paths to process with backup settings
     │   ├── backup.txt
     │   └── logging.json
     └── build.ps1             # Helpers (Build, run, smoke, coverage helpers)
+```
 
 ------------------------------------------------------------------------
 
-## ⚙️ Configuration Files 
+## ⚙️ Configuration Files
 These Files are required for the program to run
 
-### `configs/folders.txt`
+### `configs/paths.txt`
 
-List of folders **or individual files** to process (one per line).
+List of **paths** (folders or individual files) to process with per-path backup control.
+
+#### Format
+
+```
+path, yes|no
+```
+
+- `path`: the file or folder to process
+- `yes`: enable backup before deletion
+- `no`: delete without backup
 
 #### Path Types Supported
 
 | Type | Description | Example |
 |------|-------------|---------|
-| **Folder** | All files inside the folder (recursively) are evaluated | `C:\Temp\OldFiles` |
-| **File** | The specific file is evaluated directly | `C:\Data\Images\old-photo.jpg` |
+| **Folder** | All files inside the folder (recursively) are evaluated | `C:\Temp\OldFiles, yes` |
+| **File** | The specific file is evaluated directly | `C:\Data\Images\old-photo.jpg, no` |
 
 #### Examples
 
 ```text
-# Folders - delete all old files from these locations
-C:\Temp\OldFiles
-    ```text
-    # Local temp files
-    C:\Temp\OldFiles
+# Folders with backup enabled - delete all old files after backing up
+C:\Temp\OldFiles, yes
+\\server\share\incoming, yes
 
-    # Network location
-\\server\share\incoming
-```
+# Folders without backup - delete files directly (use with caution)
+C:\Temp\ToDelete, no
 
-# Specific files - delete only these exact files
-C:\Data\Images\old-photo.jpg
-C:\Logs\debug.log
+# Specific files with backup
+C:\Data\Images\old-photo.jpg, yes
+
+# Specific files without backup
+C:\Logs\debug.log, no
 ```
 
 - Empty lines are ignored
 - Lines starting with `#` are treated as comments
 - Individual files must meet the age criteria (unless `-days 0` is used)
+- Backup is enabled by default if not specified
 
 ### `configs/backup.txt`
 
 Backup destination root.
 
 ```text
-    \\server\share\backups
+\\server\share\backups
 ```
 - If empty, defaults to ../backups relative to configs/
 - Path is validated and write-tested before any deletion occurs
+- Only read if at least one path has backup enabled
 
 ### `configs/logging.json`
 
@@ -241,11 +256,16 @@ All files processed in the same run share the same DDMmmYY folder.
 ```
 Deletes files older than 7 days (after backing them up).
 
-### Disable backups (⚠️ dangerous)
+### Per-path backup control
 ```powershell
-    fileMaintenance.exe -days 7 -no-backup
+    fileMaintenance.exe -days 7
 ```
-Deletes files without backup. Use only intentionally.
+
+Configure backup behavior in `paths.txt`:
+```text
+C:\Temp\OldFiles, yes    # Backup enabled
+C:\Temp\ToDelete, no      # Backup disabled
+```
 
 ### Resource-controlled run (recommended)
 ```powershell
@@ -264,7 +284,7 @@ Ideal for:
 
 ## 🧠 Concurrency Model (Important)
 
-- Folder scanning
+- Path scanning
 Parallel, bounded by `-walkers` (default: 1)
 - File operations (copy + delete)
 **always serialized** (one file at a time)
@@ -281,7 +301,7 @@ Why:
 After a file is deleted:
   - Parent directories are removed **only if empty**
   - Cleanup proceeds bottom-up
-  - Deletion never crosses the configured folder root
+  - Deletion never crosses the configured path root
   - Path comparisons are Windows-safe (case-insensitive)
 
 This keeps folder trees tidy without risk
@@ -297,7 +317,7 @@ This keeps folder trees tidy without risk
 - logs/count_YYYY-MM-DD.log - COUNT only — (summary totals)
 
 > [NOTE]
-> Per-folder delete counts are logged after the run finishes, so totals remain accurate.
+> Per-path delete counts are logged after the run finishes, so totals remain accurate.
 
 ### Console mode
 
@@ -335,12 +355,13 @@ Task options:
 ## 🔐 Safety Guarantees
 
 This tool is designed to fail safe:
-  - ❌ No deletion if backup root is inaccessible 
+  - ❌ No deletion if backup root is inaccessible (when backup is enabled)
   - ❌ No deletion if backup copy fails
   - ❌ No path traversal outside backup root
-  - ❌ No directory deletion above configured folder root
+  - ❌ No directory deletion above configured path root
   - ❌ No unbounded goroutines or memory growth
   - ✅ Network hiccups handled with retries + backoff
+  - ✅ Per-path backup control prevents accidental deletion without backup
 
 ------------------------------------------------------------------------
 

@@ -5,14 +5,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"file-maintenance/internal/logging"
+	"file-maintenance/internal/types"
 )
 
-// ReadFolderList reads the list of paths to process from `folders.txt`.
+// ReadFolderList reads the list of paths to process from `paths.txt`.
 //
 // Contract:
-// - One path per line (can be a file OR a folder)
+// - One entry per line (can be a file OR a folder)
 // - Empty lines are ignored
 // - Lines starting with '#' are treated as comments
+// - Each line can have an optional backup setting: "path, yes" or "path, no"
+//
+// Format:
+//   - path                    - uses default backup behavior (backup enabled)
+//   - path, yes               - backup enabled for this path
+//   - path, no                - backup disabled for this path
 //
 // This allows operators to temporarily disable folders or add notes
 // without changing code or redeploying the binary.
@@ -24,33 +33,38 @@ import (
 // - Delete all old files from a folder (just specify the folder path)
 // - Delete specific files (just specify the full file path)
 // - Temporarily disable paths or add notes without changing code
+// - Control backup behavior per-path using "yes" or "no" after a comma
 //
 // Example folders.txt:
 //
-//	# Delete all old files from these folders
-//	C:\temp\old
+//	# Delete all old files from these folders (with backup)
+//	C:\temp\old, yes
 //
-//	# Network share
-//	\\server\share\incoming
+//	# Network share (without backup)
+//	\\server\share\incoming, no
 //
-//	# Delete specific files
-//	C:\Data\Images\old-photo.jpg
-//	C:\Logs\debug.log
+//	# Delete specific files (with backup)
+//	C:\Data\Images\old-photo.jpg, yes
+
+//	# Delete specific files (without backup)
+//	C:\Logs\debug.log, no
 //
 // Errors:
-//   - Returns an error if folders.txt cannot be read.
+//   - Returns an error if paths.txt cannot be read.
 //   - No validation of path existence is performed here; that is deferred
 //     to later stages so configuration errors fail fast and explicitly.
-func ReadFolderList(configDir string) ([]string, error) {
-	// Read the entire file at once; this file is expected to be small.
-	b, err := os.ReadFile(filepath.Join(configDir, "folders.txt"))
+func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, error) {
+
+	pathsFile := filepath.Join(configDir, "paths.txt")
+
+	b, err := os.ReadFile(pathsFile)
 	if err != nil {
-		return nil, fmt.Errorf("read folders.txt: %w", err)
+		return nil, fmt.Errorf("read paths.txt: %w", err)
 	}
 
-	// Split by newline and normalize each entry.
+	// Split by newline and parse each entry.
 	lines := strings.Split(string(b), "\n")
-	folders := make([]string, 0, len(lines))
+	configs := make([]types.PathConfig, 0, len(lines))
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -60,10 +74,61 @@ func ReadFolderList(configDir string) ([]string, error) {
 			continue
 		}
 
-		folders = append(folders, line)
+		// Parse path and optional backup setting.
+		path, backup, err := parsePathLine(line)
+		if err != nil {
+			// Skip malformed lines but log a warning (could extend to return error)
+			log.Warnf("Skipping malformed line in paths.txt: %s (error: %v)", line, err)
+			continue
+		}
+
+		// Check if path is a directory or file.
+		isDir := true
+		fi, err := os.Stat(path)
+		if err == nil {
+			isDir = fi.IsDir()
+		}
+
+		configs = append(configs, types.PathConfig{
+			Path:   path,
+			Backup: backup,
+			IsDir:  isDir,
+		})
 	}
 
-	return folders, nil
+	return configs, nil
+}
+
+// parsePathLine parses a single line from paths.txt.
+//
+// Returns:
+//   - path: the file or folder path
+//   - backup: true if backup is enabled, false otherwise
+//   - error: if the line is malformed
+func parsePathLine(line string) (string, bool, error) {
+	// Check for comma-separated format.
+	if strings.Contains(line, ",") {
+		parts := strings.SplitN(line, ",", 2)
+		path := strings.TrimSpace(parts[0])
+		backupStr := strings.ToLower(strings.TrimSpace(parts[1]))
+
+		if path == "" {
+			return "", false, fmt.Errorf("empty path in line: %s", line)
+		}
+
+		switch backupStr {
+		case "yes", "Y", "y", "true", "1":
+			return path, true, nil
+		case "no", "N", "n", "false", "0":
+			return path, false, nil
+		default:
+			// Unrecognized backup setting, default to true (backup enabled)
+			return path, true, nil
+		}
+	}
+
+	// No comma - use default behavior (backup enabled)
+	return strings.TrimSpace(line), true, nil
 }
 
 // ReadBackupLocation reads the backup destination path from `backup.txt`.
