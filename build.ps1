@@ -3,6 +3,7 @@ param(
 	[string]$Task = "build",
 
 	[int]$Days = 7,
+	[switch]$NoLogs,
 
 	# Pass-through knobs (optional)
 	[switch]$Verbose,
@@ -82,7 +83,7 @@ function Build {
 	go build -o $exe $cmdDir
 }
 
-function Run([switch]$NoLogs) {
+function Run() {
 	Build
 	if (-not $NoLogs) { Ensure-Dir $logDir }
 
