@@ -7,6 +7,7 @@ import (
 	"file-maintenance/internal/logging"
 	"file-maintenance/internal/maintenance"
 	"file-maintenance/internal/types"
+	"file-maintenance/internal/utils"
 )
 
 func Run(cfg types.AppConfig, log *logging.Logger) error {
@@ -63,7 +64,10 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 		// the dangerous case of deleting source files without successfully copying
 		// them somewhere safe first.
 		if !maintenance.CheckBackupPath(backupLocation) {
-			log.Fatalf("Backup path is not accessible: %s", backupLocation)
+			errMsg := fmt.Sprintf("Backup path is not accessible: %s\n\nPlease check path and permissions.", backupLocation)
+			// Show popup notification for the user
+			utils.ShowPopup("Backup Location Error", errMsg)
+
 			return fmt.Errorf("backup path not accessible: %s", backupLocation)
 		}
 

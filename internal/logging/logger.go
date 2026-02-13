@@ -203,7 +203,7 @@ func (l *Logger) Log(level, msg string) {
 	}
 
 	// ERROR is duplicated into a dedicated file so failures are easy to scan.
-	if level == "ERROR" {
+	if level == "ERROR" || level == "FATAL" {
 		errorFile := filepath.Join(l.settings.LogDir, fmt.Sprintf("errors_%s.log", date))
 		if err := appendLine(errorFile, line); err != nil {
 			fmt.Printf("Error writing to error log file: %v\n", err)

@@ -32,6 +32,7 @@ The process follows a predictable and safe execution flow:
 2. **Safety Checks**
    - Ensures target paths exist
    - Verifies backup destination is accessible (if any paths have backup enabled)
+   - Displays popup notification if backup location is inaccessible
    - Terminates early on fatal misconfiguration
 
 3. **Maintenance Worker**
@@ -120,6 +121,10 @@ The process follows a predictable and safe execution flow:
 - 🎯 **Per-path backup control**
   - Each path can have backup enabled or disabled independently
   - Controlled via `paths.txt` with simple `yes/no` syntax
+- 🔔 **User notifications**
+  - Popup alerts when backup location is inaccessible
+  - Critical errors shown even in unattended runs (Task Scheduler)
+  - Error icon indicates issues requiring attention
 
 ------------------------------------------------------------------------
 
@@ -363,6 +368,7 @@ This tool is designed to fail safe:
   - ❌ No unbounded goroutines or memory growth
   - ✅ Network hiccups handled with retries + backoff
   - ✅ Per-path backup control prevents accidental deletion without backup
+  - ✅ Popup notification alerts user when backup path is inaccessible
 
 ------------------------------------------------------------------------
 
