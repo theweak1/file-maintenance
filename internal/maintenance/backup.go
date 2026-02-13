@@ -161,17 +161,21 @@ func copyfileStream(srcPath, dstPath string) error {
 //
 //	backupRoot/
 //	  └── DDMmmYY/
-//	      └── <path relative to the configured folder root>/
-//	          └── file.ext
+//	      └── <folder-name>/
+//	          └── <relative-path-from-folder>/
+//	              └── file.ext
 //
 // Responsibilities:
 // - Create a date-based top-level folder per run/day (DDMmmYY).
+// - Include the folder name (base name of the configured folder) for logging clarity.
 // - Preserve the relative directory structure from the configured folder root.
 // - Produce a deterministic destination path for logging, retries, and restores.
 //
 // Notes:
 //   - This function does NOT touch the filesystem.
 //   - Directory creation is handled later by copyfileStream via MkdirAll.
+//   - The folder parameter is the full path (e.g., C:\Users\...\155),
+//     but only the base name (e.g., "155") is used in the backup path.
 //   - This helper does not enforce that srcPath is under folder; it relies on the caller
 //     to provide a srcPath discovered under that folder (e.g., via walking the folder).
 //     If callers need explicit "must be under folder" safety, enforce it at a higher level.
@@ -188,6 +192,7 @@ func buildBackupPath(backupRoot, folder, srcPath string) (string, error) {
 	return filepath.Join(
 		backupRoot,
 		dateFolder,
+		filepath.Base(folder),
 		relPath,
 	), nil
 }

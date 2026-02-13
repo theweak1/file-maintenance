@@ -217,7 +217,6 @@ func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConf
 				// Invariants:
 				// - must NOT delete above the configured folder root
 				// - Windows requires directories to be empty before removing them
-				cleanupEmptyDirs(filepath.Dir(job.srcPath), job.folderRoot, log)
 			}
 
 			// Global processed count for stop conditions and run reporting.

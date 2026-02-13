@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"file-maintenance/internal/logging"
 )
 
 // DeleteFile removes a single file from disk.
@@ -44,42 +42,6 @@ func DeleteFile(srcPath string) error {
 // Conservative-by-design:
 // - If anything unexpected happens, this function stops quietly.
 // - No errors are returned to avoid risking removal of unintended directories.
-func cleanupEmptyDirs(startDir, stopDir string, log *logging.Logger) {
-	cur := startDir
-
-	for {
-		// Stop once we reach the configured folder root.
-		// This prevents deleting directories outside the scope of this run.
-		if samePath(cur, stopDir) {
-			return
-		}
-
-		// Check whether the directory is empty (non-recursive).
-		empty, err := isDirEmpty(cur)
-		if err != nil {
-			// If we can't read the directory, do not attempt deletion.
-			return
-		}
-		if !empty {
-			// As soon as we find a non-empty directory, stop.
-			return
-		}
-
-		// Attempt to remove the empty directory.
-		// On Windows, this will fail if:
-		// - the directory is not empty
-		// - another process has it open
-		// - permissions are insufficient
-		if err := os.Remove(cur); err != nil {
-			return
-		}
-
-		log.Infof("Removed empty directory: %s", cur)
-
-		// Move one level up and repeat.
-		cur = filepath.Dir(cur)
-	}
-}
 
 // samePath compares two filesystem paths for equality in a Windows-safe way.
 //

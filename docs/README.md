@@ -46,7 +46,7 @@ The process follows a predictable and safe execution flow:
    - Backup destination path is built as:
 
     ```text
-    backupRoot/DDMmmYY/relative-path
+    backupRoot/DDMmmYY/<folder-name>/relative-path
     ```
    - Files are copied using streaming I/O with retry + backoff
    - Original files are deleted only after successful backup (unless backup is disabled for that path)
@@ -228,7 +228,7 @@ Backups are written using a date-based folder structure that preserves the origi
 Destination format:
 
 ```text
-    <backupRoot>/<DDMmmYY>/<relative folder structure>/<filename>
+    <backupRoot>/<DDMmmYY>/<folder-name>/<relative folder structure>/<filename>
 ```
 
 Example:
@@ -237,11 +237,12 @@ Source file:
 C:\Data\Images\2024\Camera\IMG001.jpg
 
 Backup destination:
-\\server\share\backups\30Jan26\2024\Camera\IMG001.jpg
+\\server\share\backups\30Jan26\Camera\IMG001.jpg
 ```
 
 Why this design:
     - Keeps backups grouped per run/day
+    - Includes folder name for clear logging and easy restore
     - Preserves original folder structure for easy restore
     - Prevents filename collisions
     - Makes auditing and cleanup straightforward
