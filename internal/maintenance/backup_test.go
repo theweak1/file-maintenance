@@ -25,7 +25,7 @@ func TestBuildBackupPath_Table(t *testing.T) {
 			backupRoot: filepath.Join("D:", "backup"),
 			folderRoot: filepath.Join("C:", "data"),
 			srcPath:    filepath.Join("C:", "data", "sub", "file.txt"),
-			want:       filepath.Join("D:", "backup", dateFolder, "sub", "file.txt"),
+			want:       filepath.Join("D:", "backup", dateFolder, "data", "sub", "file.txt"),
 		},
 		{
 			name:       "src outside folder root may produce '..' via filepath.Rel",
@@ -38,7 +38,14 @@ func TestBuildBackupPath_Table(t *testing.T) {
 			// "must be under folderRoot" safety. If callers need to prevent path
 			// traversal / escaping, that must be enforced at a higher level (e.g.,
 			// by validating rel paths or using the guarded backupDestPath logic).
-			want: filepath.Join("D:", "backup", dateFolder, "..", "other", "file.txt"),
+			want: filepath.Join("D:", "backup", dateFolder, "other", "file.txt"),
+		},
+		{
+			name:       "error on different drives",
+			backupRoot: filepath.Join("D:", "backup"),
+			folderRoot: filepath.Join("C:", "data"),
+			srcPath:    filepath.Join("D:", "other", "file.txt"),
+			wantErr:    true,
 		},
 	}
 
@@ -72,6 +79,8 @@ func TestBackoffForAttempt_Table(t *testing.T) {
 		{"second", 1, 1 * time.Second},
 		{"third", 2, 3 * time.Second},
 		{"beyond", 10, 3 * time.Second},
+		{"negative", -1, 3 * time.Second},
+		{"large", 100, 3 * time.Second},
 	}
 
 	for _, tt := range tests {

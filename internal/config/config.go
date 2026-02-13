@@ -10,24 +10,30 @@ import (
 	"file-maintenance/internal/types"
 )
 
-// ReadFolderList reads the list of paths to process from `paths.txt`.
+// ReadAllConfig reads all configuration from a single config.ini file.
 //
-// Contract:
-// - One entry per line (can be a file OR a folder)
-// - Empty lines are ignored
-// - Lines starting with '#' are treated as comments
-// - Each line can have an optional backup setting: "path, yes" or "path, no"
+// File Format:
 //
-// Format:
-//   - path                    - uses default backup behavior (backup enabled)
-//   - path, yes               - backup enabled for this path
-//   - path, no                - backup disabled for this path
+//	; Comments start with semicolon
+//	[backup]
+//	path=D:\backups
 //
-// This allows operators to temporarily disable folders or add notes
-// without changing code or redeploying the binary.
-// Path handling:
-// - Folders: All files inside the folder (recursively) that meet age criteria are processed.
-// - Files: The individual file is processed directly if it meets age criteria.
+//	[paths]
+//	; One entry per line (can be a file OR a folder)
+//	; Empty lines are ignored
+//	; Lines starting with ';' are treated as comments
+//	; Each line can have an optional backup setting: "path, yes" or "path, no"
+//	;
+//	; Format:
+//	;   - path                    - uses default backup behavior (backup enabled)
+//	;   - path, yes               - backup enabled for this path
+//	;   - path, no                - backup disabled for this path
+//	;
+//
+// Examples:
+//
+//	C	;:\temp\old, yes
+//	\\server\share\incoming, no
 //
 // This allows operators to:
 // - Delete all old files from a folder (just specify the folder path)
@@ -35,54 +41,133 @@ import (
 // - Temporarily disable paths or add notes without changing code
 // - Control backup behavior per-path using "yes" or "no" after a comma
 //
-// Example folders.txt:
-//
-//	# Delete all old files from these folders (with backup)
-//	C:\temp\old, yes
-//
-//	# Network share (without backup)
-//	\\server\share\incoming, no
-//
-//	# Delete specific files (with backup)
-//	C:\Data\Images\old-photo.jpg, yes
-
-//	# Delete specific files (without backup)
-//	C:\Logs\debug.log, no
-//
 // Errors:
-//   - Returns an error if paths.txt cannot be read.
+//   - Returns an error if config.ini cannot be read.
+//   - Returns an error if [backup] section is missing or has no path.
 //   - No validation of path existence is performed here; that is deferred
 //     to later stages so configuration errors fail fast and explicitly.
-func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, error) {
+func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, string, error) {
+	configFile := filepath.Join(configDir, "config.ini")
 
-	pathsFile := filepath.Join(configDir, "paths.txt")
-
-	b, err := os.ReadFile(pathsFile)
+	b, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, fmt.Errorf("read paths.txt: %w", err)
+		return nil, "", fmt.Errorf("read config.ini: %w", err)
 	}
 
-	// Split by newline and parse each entry.
-	lines := strings.Split(string(b), "\n")
+	// Parse INI sections
+	sections, standaloneLines, err := parseIniSections(string(b))
+	if err != nil {
+		return nil, "", fmt.Errorf("parse config.ini: %w", err)
+	}
+
+	// Get backup path from [backup] section
+	backupSection, ok := sections["backup"]
+	if !ok {
+		return nil, "", fmt.Errorf("missing [backup] section in config.ini")
+	}
+
+	backupPath, ok := backupSection["path"]
+	if !ok || backupPath == "" {
+		return nil, "", fmt.Errorf("missing 'path' key in [backup] section")
+	}
+
+	// Get paths from [paths] section
+	pathConfigs, err := parsePathsSection(log, sections["paths"], standaloneLines["paths"])
+	if err != nil {
+		return nil, "", err
+	}
+
+	return pathConfigs, backupPath, nil
+}
+
+// parseIniSections parses a simple INI-style config file.
+// Returns a map of section name to key-value pairs and a list of standalone lines.
+func parseIniSections(content string) (map[string]map[string]string, map[string][]string, error) {
+	sections := make(map[string]map[string]string)
+	standaloneLines := make(map[string][]string)
+	var currentSection string
+
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+
+		// Check for section header
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			sectionName := strings.Trim(line, "[]")
+			if sectionName == "" {
+				return nil, nil, fmt.Errorf("empty section name")
+			}
+			currentSection = sectionName
+			sections[currentSection] = make(map[string]string)
+			continue
+		}
+
+		// Skip comments
+		if strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		// Parse key-value pair or standalone line
+		if currentSection == "" {
+			return nil, nil, fmt.Errorf("line outside of section: %s", line)
+		}
+
+		// Check if line contains '='
+		if strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				key := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				sections[currentSection][key] = value
+			}
+		} else {
+			// Standalone line (e.g., a path without key)
+			standaloneLines[currentSection] = append(standaloneLines[currentSection], line)
+		}
+	}
+
+	return sections, standaloneLines, nil
+}
+
+// parsePathsSection parses the [paths] section entries.
+// Supports both inline format and key-value format:
+//   - Inline: paths listed directly under [paths] section
+//   - Key-value: paths under 'paths' key
+func parsePathsSection(log *logging.Logger, section map[string]string, standalone []string) ([]types.PathConfig, error) {
+	var pathsContent string
+
+	// Check for 'paths' key first
+	if content, ok := section["paths"]; ok && content != "" {
+		pathsContent = content
+	} else {
+		// Use standalone lines
+		pathsContent = strings.Join(standalone, "\n")
+	}
+
+	lines := strings.Split(pathsContent, "\n")
 	configs := make([]types.PathConfig, 0, len(lines))
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 
-		// Skip empty lines and comments.
-		if line == "" || strings.HasPrefix(line, "#") {
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		// Parse path and optional backup setting.
+		// Parse path and optional backup setting
 		path, backup, err := parsePathLine(line)
 		if err != nil {
-			// Skip malformed lines but log a warning (could extend to return error)
-			log.Warnf("Skipping malformed line in paths.txt: %s (error: %v)", line, err)
+			log.Warnf("Skipping malformed line in config.ini [paths]: %s (error: %v)", line, err)
 			continue
 		}
 
-		// Check if path is a directory or file.
+		// Check if path is a directory or file
 		isDir := true
 		fi, err := os.Stat(path)
 		if err == nil {
@@ -99,14 +184,14 @@ func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, 
 	return configs, nil
 }
 
-// parsePathLine parses a single line from paths.txt.
+// parsePathLine parses a single path entry from paths section.
 //
 // Returns:
 //   - path: the file or folder path
 //   - backup: true if backup is enabled, false otherwise
 //   - error: if the line is malformed
 func parsePathLine(line string) (string, bool, error) {
-	// Check for comma-separated format.
+	// Check for comma-separated format
 	if strings.Contains(line, ",") {
 		parts := strings.SplitN(line, ",", 2)
 		path := strings.TrimSpace(parts[0])
@@ -117,9 +202,9 @@ func parsePathLine(line string) (string, bool, error) {
 		}
 
 		switch backupStr {
-		case "yes", "Y", "y", "true", "1":
+		case "yes", "y", "true", "1":
 			return path, true, nil
-		case "no", "N", "n", "false", "0":
+		case "no", "n", "false", "0":
 			return path, false, nil
 		default:
 			// Unrecognized backup setting, default to true (backup enabled)
@@ -131,21 +216,52 @@ func parsePathLine(line string) (string, bool, error) {
 	return strings.TrimSpace(line), true, nil
 }
 
+// ReadFolderList reads the list of paths to process from `paths.txt`.
+//
+// Deprecated: Use ReadAllConfig instead which reads from config.ini
+func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, error) {
+	pathsFile := filepath.Join(configDir, "paths.txt")
+
+	b, err := os.ReadFile(pathsFile)
+	if err != nil {
+		return nil, fmt.Errorf("read paths.txt: %w", err)
+	}
+
+	lines := strings.Split(string(b), "\n")
+	configs := make([]types.PathConfig, 0, len(lines))
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		path, backup, err := parsePathLine(line)
+		if err != nil {
+			log.Warnf("Skipping malformed line in paths.txt: %s (error: %v)", line, err)
+			continue
+		}
+
+		isDir := true
+		fi, err := os.Stat(path)
+		if err == nil {
+			isDir = fi.IsDir()
+		}
+
+		configs = append(configs, types.PathConfig{
+			Path:   path,
+			Backup: backup,
+			IsDir:  isDir,
+		})
+	}
+
+	return configs, nil
+}
+
 // ReadBackupLocation reads the backup destination path from `backup.txt`.
 //
-// Contract:
-// - If backup.txt contains a non-empty path, that path is returned as-is.
-// - If backup.txt exists but is empty or whitespace-only, a default path is used.
-// - The default backup location is "../backups" relative to the config directory.
-//
-// This design allows:
-// - Easy redirection to a network share (UNC path).
-// - A sane local fallback for development, testing, or first-time installs.
-//
-// Safety:
-//   - This function does NOT validate existence or permissions.
-//   - Accessibility and directory checks are enforced later by
-//     maintenance.CheckBackupPath() before any files are deleted.
+// Deprecated: Use ReadAllConfig instead which reads from config.ini
 func ReadBackupLocation(configDir string) (string, error) {
 	b, err := os.ReadFile(filepath.Join(configDir, "backup.txt"))
 	if err != nil {
@@ -154,11 +270,6 @@ func ReadBackupLocation(configDir string) (string, error) {
 
 	path := strings.TrimSpace(string(b))
 	if path == "" {
-		// Default backup location:
-		//   <configDir>/../backups
-		//
-		// Keeps backups adjacent to the app/config layout
-		// without hard-coding an absolute path.
 		return filepath.Join(configDir, "..", "backups"), nil
 	}
 

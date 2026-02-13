@@ -36,7 +36,7 @@ type FileJob struct {
 	folderRoot string
 
 	// backup indicates whether this file should be backed up before deletion.
-	// This is set based on the path's configuration in paths.txt.
+	// This is set based on the path's configuration in config.ini.
 	backup bool
 }
 

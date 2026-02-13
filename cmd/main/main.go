@@ -34,7 +34,7 @@ func main() {
 	// -----------------------------------------------------------------------------
 	// Default locations relative to the app root.
 	//
-	// - configs/ holds paths.txt, backup.txt, logging.json, etc.
+	// - configs/ holds config.ini, logging.json, etc.
 	// - logs/ is where the logger writes log files (unless -no-logs is set)
 	// -----------------------------------------------------------------------------
 	defaultLogDir := filepath.Join(root, "logs")
@@ -83,7 +83,7 @@ func main() {
 	//
 	// Notes:
 	// - BackupDir is intentionally left empty here; app.Run() resolves it from
-	//   config files (e.g., configs/backup.txt) so scheduled runs don't require
+	//   config files (e.g., configs/config.ini) so scheduled runs don't require
 	//   passing a long path via CLI flags.
 	// - LogSettings control whether logs are written to disk or printed to stdout.
 	// -----------------------------------------------------------------------------
@@ -92,7 +92,7 @@ func main() {
 		ConfigDir:    *configDir,
 		LogRetention: *logRetention,
 
-		// Read from configs/backup.txt (or equivalent) inside app.Run().
+		// Read from configs/config.ini inside app.Run().
 		BackupDir: "",
 
 		LogSettings: logging.LogSettings{

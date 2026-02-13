@@ -6,7 +6,7 @@ import (
 	"file-maintenance/internal/logging"
 )
 
-// PathConfig represents a path entry from paths.txt with its associated backup setting.
+// PathConfig represents a path entry from config.ini with its associated backup setting.
 //
 // Format: path, yes|no (comma-separated)
 // - path: the file or folder to process
@@ -45,14 +45,13 @@ type AppConfig struct {
 	LogRetention int
 
 	// ConfigDir is the directory containing configuration files such as:
-	// - folders.txt
-	// - backup.txt
+	// - config.ini
 	// - logging.json
 	//
 	// Typically defaults to "<exeDir>/configs".
 	ConfigDir string
 
-	// BackupDir is the resolved backup destination root (typically loaded from backup.txt).
+	// BackupDir is the resolved backup destination root (loaded from config.ini).
 	//
 	// Note:
 	// - app.Run() usually reads this from config and passes it to Worker().

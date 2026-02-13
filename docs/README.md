@@ -120,7 +120,7 @@ The process follows a predictable and safe execution flow:
   - Per-level enable/disable via `logging.json`
 - 🎯 **Per-path backup control**
   - Each path can have backup enabled or disabled independently
-  - Controlled via `paths.txt` with simple `yes/no` syntax
+  - Controlled via `config.ini` with simple `yes/no` syntax
 - 🔔 **User notifications**
   - Popup alerts when backup location is inaccessible
   - Critical errors shown even in unattended runs (Task Scheduler)
@@ -136,14 +136,13 @@ The process follows a predictable and safe execution flow:
     │   └── main/              # CLI entry point
     ├── internal/
     │   ├── app/               # High-level application orchestration
-    │   ├── config/            # Reading paths.txt, backup.txt, logging.json
+    │   ├── config/            # Reading config.ini and logging.json
     │   ├── logging/           # Thread-safe logger
     │   ├── maintenance/       # Core logic (scan, backup, delete, cleanup)
     │   ├── types/             # AppConfig definition
     │   └── utils/             # Helpers (exe path resolution, etc.)
     ├── configs/
-    │   ├── paths.txt          # Paths to process with backup settings
-    │   ├── backup.txt
+    │   ├── config.ini         # All configuration (backup path + paths list)
     │   └── logging.json
     └── build.ps1             # Helpers (Build, run, smoke, coverage helpers)
 ```
@@ -153,11 +152,29 @@ The process follows a predictable and safe execution flow:
 ## ⚙️ Configuration Files
 These Files are required for the program to run
 
-### `configs/paths.txt`
+### `configs/config.ini`
 
-List of **paths** (folders or individual files) to process with per-path backup control.
+Single configuration file containing both backup destination and paths list.
 
 #### Format
+
+```ini
+[backup]
+path=<backup-destination>
+
+[paths]
+path1, yes|no
+path2, yes|no
+```
+
+#### Sections
+
+| Section | Key | Description |
+|---------|-----|-------------|
+| `[backup]` | `path` | Backup destination root path |
+| `[paths]` | (standalone lines) | Paths to process with per-path backup control |
+
+#### Paths Format
 
 ```
 path, yes|no
@@ -176,7 +193,11 @@ path, yes|no
 
 #### Examples
 
-```text
+```ini
+[backup]
+path=D:\backups
+
+[paths]
 # Folders with backup enabled - delete all old files after backing up
 C:\Temp\OldFiles, yes
 \\server\share\incoming, yes
@@ -192,20 +213,9 @@ C:\Logs\debug.log, no
 ```
 
 - Empty lines are ignored
-- Lines starting with `#` are treated as comments
+- Lines starting with `;` or `#` are treated as comments
 - Individual files must meet the age criteria (unless `-days 0` is used)
 - Backup is enabled by default if not specified
-
-### `configs/backup.txt`
-
-Backup destination root.
-
-```text
-\\server\share\backups
-```
-- If empty, defaults to ../backups relative to configs/
-- Path is validated and write-tested before any deletion occurs
-- Only read if at least one path has backup enabled
 
 ### `configs/logging.json`
 
@@ -267,8 +277,9 @@ Deletes files older than 7 days (after backing them up).
     fileMaintenance.exe -days 7
 ```
 
-Configure backup behavior in `paths.txt`:
-```text
+Configure backup behavior in `config.ini`:
+```ini
+[paths]
 C:\Temp\OldFiles, yes    # Backup enabled
 C:\Temp\ToDelete, no      # Backup disabled
 ```

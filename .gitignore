@@ -45,6 +45,7 @@ temp/
 config/*.local.json
 config/*.local.yaml
 config/*.local.toml
+config.ini
 
 # Example: real config generated on machine
 logging.json
