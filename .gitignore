@@ -8,6 +8,7 @@
 *.dylib
 *.test
 *.out
+.bin/
 
 # Go workspace
 /go.work
@@ -45,18 +46,15 @@ temp/
 config/*.local.json
 config/*.local.yaml
 config/*.local.toml
-config.ini
+config/*.local.ini
 
-# Example: real config generated on machine
-logging.json
-paths.txt
-backup.txt
 
 # =========================
 # Test artifacts
 # =========================
 coverage.out
 coverage.html
+test/
 
 # =========================
 # Windows Scheduled Task leftovers
@@ -64,4 +62,3 @@ coverage.html
 *.job
 *.task
 
-test/
