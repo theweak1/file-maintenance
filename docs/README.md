@@ -79,7 +79,7 @@ The process follows a predictable and safe execution flow:
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-config-dir` | `<exe>/configs` | Config directory |
+| `-config-dir` | `<exe>/config` | Config directory |
 | `-log-dir` | `<exe>/logs` | Log directory |
 | `-no-logs` | `false` | Console-only logging |
 
@@ -126,6 +126,8 @@ The process follows a predictable and safe execution flow:
   - Critical errors shown even in unattended runs (Task Scheduler)
   - Error icon indicates issues requiring attention
 
+![Backup Location Error Pop-up](Images/Backup%20Location%20Error%20pop-up.png)
+
 ------------------------------------------------------------------------
 
 ## 📁 Project Structure
@@ -141,7 +143,7 @@ The process follows a predictable and safe execution flow:
     │   ├── maintenance/       # Core logic (scan, backup, delete, cleanup)
     │   ├── types/             # AppConfig definition
     │   └── utils/             # Helpers (exe path resolution, etc.)
-    ├── configs/
+    ├── config/
     │   ├── config.ini         # All configuration (backup path + paths list)
     │   └── logging.json
     └── build.ps1             # Helpers (Build, run, smoke, coverage helpers)
@@ -152,7 +154,7 @@ The process follows a predictable and safe execution flow:
 ## ⚙️ Configuration Files
 These Files are required for the program to run
 
-### `configs/config.ini`
+### `config/config.ini`
 
 Single configuration file containing both backup destination and paths list.
 
@@ -217,7 +219,7 @@ C:\Logs\debug.log, no
 - Individual files must meet the age criteria (unless `-days 0` is used)
 - Backup is enabled by default if not specified
 
-### `configs/logging.json`
+### `config/logging.json`
 
 Enable/disable log levels.
 ```json
@@ -391,7 +393,7 @@ This tool is designed to fail safe:
 ```
 - Builds the binary
 - Runs with `-no-logs`
-- Verifies configs exist
+- Verifies config exist
 
 ------------------------------------------------------------------------
 
