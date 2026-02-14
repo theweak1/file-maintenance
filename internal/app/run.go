@@ -18,16 +18,16 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 	// - [backup] section with 'path' key for backup destination
 	// - [paths] section with 'paths' key containing all paths to process
 	//
-	// For unattended/scheduled runs we prefer to fail early if configs are
+	// For unattended/scheduled runs we prefer to fail early if config are
 	// missing or malformed rather than doing partial work with unclear outcomes.
 	// -----------------------------------------------------------------------------
-	pathConfigs, backupLocation, err := config.ReadAllConfig(cfg.ConfigDir, log)
+	pathconfig, backupLocation, err := config.ReadAllConfig(cfg.ConfigDir, log)
 	if err != nil {
 		return err
 	}
 
 	// Log paths and their backup settings.
-	for _, pc := range pathConfigs {
+	for _, pc := range pathconfig {
 		backupStr := "yes"
 		if !pc.Backup {
 			backupStr = "no"
@@ -47,7 +47,7 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 	// - Worker will run in "delete only" mode.
 	// -----------------------------------------------------------------------------
 	anyBackupEnabled := false
-	for _, pc := range pathConfigs {
+	for _, pc := range pathconfig {
 		if pc.Backup {
 			anyBackupEnabled = true
 			break
@@ -85,7 +85,7 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 	// - We must return Worker errors; otherwise failures are invisible to callers
 	//   and Task Scheduler exit codes.
 	// -----------------------------------------------------------------------------
-	if err := maintenance.Worker(pathConfigs, backupLocation, cfg, log); err != nil {
+	if err := maintenance.Worker(pathconfig, backupLocation, cfg, log); err != nil {
 		return err
 	}
 

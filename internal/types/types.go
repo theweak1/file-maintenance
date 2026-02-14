@@ -48,7 +48,7 @@ type AppConfig struct {
 	// - config.ini
 	// - logging.json
 	//
-	// Typically defaults to "<exeDir>/configs".
+	// Typically defaults to "<exeDir>/config".
 	ConfigDir string
 
 	// BackupDir is the resolved backup destination root (loaded from config.ini).

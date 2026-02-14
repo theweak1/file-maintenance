@@ -20,7 +20,7 @@ func main() {
 	// Why:
 	// - This tool is meant to run unattended and from arbitrary working directories
 	//   (Windows Task Scheduler, terminal, etc.).
-	// - Default paths (configs/, logs/) live next to the .exe to reduce surprises.
+	// - Default paths (config/, logs/) live next to the .exe to reduce surprises.
 	//
 	// Note:
 	// - ExeDir() can fail in some environments (permissions, odd launch contexts),
@@ -34,11 +34,11 @@ func main() {
 	// -----------------------------------------------------------------------------
 	// Default locations relative to the app root.
 	//
-	// - configs/ holds config.ini, logging.json, etc.
+	// - config/ holds config.ini, logging.json, etc.
 	// - logs/ is where the logger writes log files (unless -no-logs is set)
 	// -----------------------------------------------------------------------------
 	defaultLogDir := filepath.Join(root, "logs")
-	defaultCfgDir := filepath.Join(root, "configs")
+	defaultCfgDir := filepath.Join(root, "config")
 
 	// -----------------------------------------------------------------------------
 	// CLI flags
@@ -83,7 +83,7 @@ func main() {
 	//
 	// Notes:
 	// - BackupDir is intentionally left empty here; app.Run() resolves it from
-	//   config files (e.g., configs/config.ini) so scheduled runs don't require
+	//   config files (e.g., config/config.ini) so scheduled runs don't require
 	//   passing a long path via CLI flags.
 	// - LogSettings control whether logs are written to disk or printed to stdout.
 	// -----------------------------------------------------------------------------
@@ -92,7 +92,7 @@ func main() {
 		ConfigDir:    *configDir,
 		LogRetention: *logRetention,
 
-		// Read from configs/config.ini inside app.Run().
+		// Read from config/config.ini inside app.Run().
 		BackupDir: "",
 
 		LogSettings: logging.LogSettings{
@@ -129,7 +129,7 @@ func main() {
 	// Run the application.
 	//
 	// app.Run() is responsible for:
-	// - reading configs (paths list, backup root, logging settings)
+	// - reading config (paths list, backup root, logging settings)
 	// - pruning old logs (if logging enabled)
 	// - calling maintenance.Worker() to process eligible files
 	// -----------------------------------------------------------------------------

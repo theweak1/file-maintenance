@@ -16,7 +16,7 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $binDir = Join-Path $root ".bin"
 $exe = Join-Path $binDir "fileMaintenance.exe"
 $cmdDir = Join-Path $root "cmd\main"
-$configDir = Join-Path $root "configs"
+$configDir = Join-Path $root "config"
 $logDir = Join-Path $root "logs"
 
 function Ensure-Dir([string]$Path) {

@@ -72,12 +72,12 @@ func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, s
 	}
 
 	// Get paths from [paths] section
-	pathConfigs, err := parsePathsSection(log, sections["paths"], standaloneLines["paths"])
+	pathconfig, err := parsePathsSection(log, sections["paths"], standaloneLines["paths"])
 	if err != nil {
 		return nil, "", err
 	}
 
-	return pathConfigs, backupPath, nil
+	return pathconfig, backupPath, nil
 }
 
 // parseIniSections parses a simple INI-style config file.
@@ -150,7 +150,7 @@ func parsePathsSection(log *logging.Logger, section map[string]string, standalon
 	}
 
 	lines := strings.Split(pathsContent, "\n")
-	configs := make([]types.PathConfig, 0, len(lines))
+	config := make([]types.PathConfig, 0, len(lines))
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -174,14 +174,14 @@ func parsePathsSection(log *logging.Logger, section map[string]string, standalon
 			isDir = fi.IsDir()
 		}
 
-		configs = append(configs, types.PathConfig{
+		config = append(config, types.PathConfig{
 			Path:   path,
 			Backup: backup,
 			IsDir:  isDir,
 		})
 	}
 
-	return configs, nil
+	return config, nil
 }
 
 // parsePathLine parses a single path entry from paths section.
@@ -228,7 +228,7 @@ func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, 
 	}
 
 	lines := strings.Split(string(b), "\n")
-	configs := make([]types.PathConfig, 0, len(lines))
+	config := make([]types.PathConfig, 0, len(lines))
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -249,14 +249,14 @@ func ReadFolderList(configDir string, log *logging.Logger) ([]types.PathConfig, 
 			isDir = fi.IsDir()
 		}
 
-		configs = append(configs, types.PathConfig{
+		config = append(config, types.PathConfig{
 			Path:   path,
 			Backup: backup,
 			IsDir:  isDir,
 		})
 	}
 
-	return configs, nil
+	return config, nil
 }
 
 // ReadBackupLocation reads the backup destination path from `backup.txt`.

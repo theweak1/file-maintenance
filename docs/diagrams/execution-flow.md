@@ -2,7 +2,7 @@
 flowchart TD
   A[Start Application]
   B[Parse CLI Flags]
-  C[Resolve default paths<br/>exeDir configs logs]
+  C[Resolve default paths<br/>exeDir config logs]
   D[Build AppConfig from flags]
   E[Initialize Logger]
   F[Print stderr and Exit 1]

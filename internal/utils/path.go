@@ -28,7 +28,7 @@ import (
 //	if err != nil {
 //	    root, _ = os.Getwd()
 //	}
-//	defaultConfigDir := filepath.Join(root, "configs")
+//	defaultConfigDir := filepath.Join(root, "config")
 //	defaultLogDir    := filepath.Join(root, "logs")
 func ExeDir() (string, error) {
 	// Get the absolute path to the currently running executable.

@@ -65,7 +65,7 @@ type FileJob struct {
 //     (regardless of whether delete succeeded). It exists for stop conditions/reporting.
 //   - deletedByFolder is PER-FOLDER and increments ONLY when a delete succeeds.
 //   - Per-folder counts are logged AFTER all processing finishes so totals are accurate.
-func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConfig, log *logging.Logger) error {
+func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfig, log *logging.Logger) error {
 	log.Info("Starting maintenance worker")
 
 	// -------------------------------------------------------------------------
@@ -249,7 +249,7 @@ func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConf
 	sem := make(chan struct{}, cfg.Walkers)
 	var walkWG sync.WaitGroup
 
-	for _, pathConfig := range pathConfigs {
+	for _, pathConfig := range pathconfig {
 		// Avoid launching new walkers once stop conditions are met.
 		if shouldStop() {
 			break
@@ -379,7 +379,7 @@ func Worker(pathConfigs []types.PathConfig, backupRoot string, cfg types.AppConf
 
 	// Accurate per-path reporting happens AFTER processing finishes.
 	perFolderMu.Lock()
-	for _, pathConfig := range pathConfigs {
+	for _, pathConfig := range pathconfig {
 		count := deletedByFolder[pathConfig.Path]
 		if pathConfig.IsDir {
 			log.Countf("Amount of files deleted from folder %s: %d", pathConfig.Path, count)

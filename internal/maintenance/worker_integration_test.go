@@ -44,11 +44,11 @@ func TestWorker_Integration_Table(t *testing.T) {
 			mustWriteFile(t, target, "hello")
 			mustSetAgeDays(t, target, tt.fileAgeDays)
 
-			pathConfigs := []types.PathConfig{
+			pathconfig := []types.PathConfig{
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -97,11 +97,11 @@ func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 			mustSetAgeDays(t, oldPath, 10) // old enough => candidate
 			mustSetAgeDays(t, newPath, 1)  // too new => must remain
 
-			pathConfigs := []types.PathConfig{
+			pathconfig := []types.PathConfig{
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -148,11 +148,11 @@ func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 			mustWriteFile(t, target, "Hello")
 			mustSetAgeDays(t, target, 10)
 
-			pathConfigs := []types.PathConfig{
+			pathconfig := []types.PathConfig{
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -203,12 +203,12 @@ func TestWorker_Integration_MultipleFolders(t *testing.T) {
 			mustSetAgeDays(t, f1, 10)
 			mustSetAgeDays(t, f2, 10)
 
-			pathConfigs := []types.PathConfig{
+			pathconfig := []types.PathConfig{
 				{Path: src1, Backup: tt.backupEnabled, IsDir: true},
 				{Path: src2, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -252,11 +252,11 @@ func TestWorker_Integration_MaxFiles_Table(t *testing.T) {
 				mustSetAgeDays(t, p, 10)
 			}
 
-			pathConfigs := []types.PathConfig{
+			pathconfig := []types.PathConfig{
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -295,11 +295,11 @@ func TestWorker_Integration_MaxRuntime_StopsEarly(t *testing.T) {
 		mustSetAgeDays(t, p, 10)
 	}
 
-	pathConfigs := []types.PathConfig{
+	pathconfig := []types.PathConfig{
 		{Path: src, Backup: false, IsDir: true},
 	}
 
-	if err := Worker(pathConfigs, backup, cfg, log); err != nil {
+	if err := Worker(pathconfig, backup, cfg, log); err != nil {
 		t.Fatalf("worker error: %v", err)
 	}
 
