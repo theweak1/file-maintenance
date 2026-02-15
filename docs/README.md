@@ -186,6 +186,13 @@ path, yes|no
 - `yes`: enable backup before deletion
 - `no`: delete without backup
 
+> **Alternative Format**: You can also use the `paths=` key prefix:
+> ```
+> paths=path, yes|no
+> ```
+
+Both formats can be mixed in the same config file.
+
 #### Path Types Supported
 
 | Type | Description | Example |
@@ -212,6 +219,9 @@ C:\Data\Images\old-photo.jpg, yes
 
 # Specific files without backup
 C:\Logs\debug.log, no
+
+# Alternative format with 'paths=' prefix (can be mixed)
+paths=C:\Temp\AltFolder, yes
 ```
 
 - Empty lines are ignored
