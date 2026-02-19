@@ -371,6 +371,42 @@ $saveBtn.Add_Click({
         return
     }
     
+    # Validate backup destination is accessible (unless all paths have backup disabled)
+    $anyBackupEnabled = ($script:Paths | Where-Object { $_.Backup }) -ne $null
+    if ($anyBackupEnabled) {
+        $backupPath = $backupTextBox.Text.Trim()
+        if (-not (Test-Path $backupPath)) {
+            # Try to create it to verify the parent is accessible
+            try {
+                New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
+            }
+            catch {
+                [System.Windows.Forms.MessageBox]::Show(
+                    "Backup location is not accessible:`n$backupPath`n`nPlease check the path and permissions.",
+                    "Backup Location Error",
+                    [System.Windows.Forms.MessageBoxButtons]::OK,
+                    [System.Windows.Forms.MessageBoxIcon]::Error
+                )
+                return
+            }
+        }
+        # Verify we can write to the backup location
+        $testFile = Join-Path $backupPath ".write_test_$(Get-Random).tmp"
+        try {
+            [System.IO.File]::WriteAllText($testFile, "test")
+            Remove-Item $testFile -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show(
+                "Cannot write to backup location:`n$backupPath`n`nPlease check permissions.",
+                "Backup Location Error",
+                [System.Windows.Forms.MessageBoxButtons]::OK,
+                [System.Windows.Forms.MessageBoxIcon]::Error
+            )
+            return
+        }
+    }
+    
     try {
         $walkers = if ($advancedCheck.Checked) { $walkersNumeric.Value } else { 1 }
         $queueSize = if ($advancedCheck.Checked) { $queueNumeric.Value } else { 300 }

@@ -3,7 +3,6 @@ package setup
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 )
 
@@ -31,57 +30,7 @@ func ConfigExists(configDir string) bool {
 // Returns:
 //   - error if the setup wizard fails to launch
 func LaunchSetupWizard(configDir, exeDir string) error {
-	// First, try to use the embedded script
-	// Note: If user cancels, the script exits with code 1 - we treat that as "user cancelled" and don't fall through
-	if err := LaunchEmbeddedSetup(configDir, exeDir); err != nil {
-		// Check if it's a user cancellation (exit code 1) vs a real error
-		// If the error contains "exit status 1", user likely cancelled - don't try fallback
-		if err.Error() != "failed to launch setup wizard: exit status 1" {
-			// Try fallback to external script
-			if fallbackErr := launchExternalSetup(configDir, exeDir); fallbackErr == nil {
-				return nil
-			}
-		}
-		return err
-	}
-	return nil
-}
-
-// launchExternalSetup tries to find and run an external setup.ps1 file
-func launchExternalSetup(configDir, exeDir string) error {
-	setupPaths := []string{
-		filepath.Join(exeDir, "config", "setup.ps1"),
-		filepath.Join(exeDir, "setup.ps1"),
-		filepath.Join(configDir, "setup.ps1"),
-		"config/setup.ps1",
-		"../config/setup.ps1",
-		filepath.Join(".", "config", "setup.ps1"),
-	}
-
-	var setupScript string
-	for _, path := range setupPaths {
-		absolutePath := path
-		if !filepath.IsAbs(path) {
-			if cwd, err := os.Getwd(); err == nil {
-				absolutePath = filepath.Join(cwd, path)
-			}
-		}
-		if _, err := os.Stat(absolutePath); err == nil {
-			setupScript = absolutePath
-			break
-		}
-	}
-
-	if setupScript == "" {
-		return fmt.Errorf("setup.ps1 not found")
-	}
-
-	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-File", setupScript, "-ConfigDir", configDir)
-	scriptDir := filepath.Dir(setupScript)
-	cmd.Dir = scriptDir
-	cmd.Env = os.Environ()
-
-	return cmd.Run()
+	return LaunchEmbeddedSetup(configDir, exeDir)
 }
 
 // EnsureConfig checks if configuration exists and launches the setup wizard if not.
