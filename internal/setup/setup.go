@@ -31,22 +31,36 @@ func ConfigExists(configDir string) bool {
 // Returns:
 //   - error if the setup wizard fails to launch
 func LaunchSetupWizard(configDir, exeDir string) error {
-	// Try to find setup.ps1 in multiple locations
+	// First, try to use the embedded script
+	// Note: If user cancels, the script exits with code 1 - we treat that as "user cancelled" and don't fall through
+	if err := LaunchEmbeddedSetup(configDir, exeDir); err != nil {
+		// Check if it's a user cancellation (exit code 1) vs a real error
+		// If the error contains "exit status 1", user likely cancelled - don't try fallback
+		if err.Error() != "failed to launch setup wizard: exit status 1" {
+			// Try fallback to external script
+			if fallbackErr := launchExternalSetup(configDir, exeDir); fallbackErr == nil {
+				return nil
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// launchExternalSetup tries to find and run an external setup.ps1 file
+func launchExternalSetup(configDir, exeDir string) error {
 	setupPaths := []string{
 		filepath.Join(exeDir, "config", "setup.ps1"),
 		filepath.Join(exeDir, "setup.ps1"),
 		filepath.Join(configDir, "setup.ps1"),
-		// Also look in the original project root (source directory)
 		"config/setup.ps1",
 		"../config/setup.ps1",
-		// Look relative to current working directory
 		filepath.Join(".", "config", "setup.ps1"),
 	}
 
 	var setupScript string
 	for _, path := range setupPaths {
 		absolutePath := path
-		// Handle relative paths
 		if !filepath.IsAbs(path) {
 			if cwd, err := os.Getwd(); err == nil {
 				absolutePath = filepath.Join(cwd, path)
@@ -59,27 +73,15 @@ func LaunchSetupWizard(configDir, exeDir string) error {
 	}
 
 	if setupScript == "" {
-		return fmt.Errorf("setup.ps1 not found in any of these locations: %v", setupPaths)
+		return fmt.Errorf("setup.ps1 not found")
 	}
 
-	// Launch PowerShell with the setup script
-	// Use -NoExit to keep the window open after script completion (optional)
-	// Use -ExecutionPolicy Bypass to ensure the script can run
 	cmd := exec.Command("powershell.exe", "-ExecutionPolicy", "Bypass", "-File", setupScript, "-ConfigDir", configDir)
-
-	// Set working directory to the script's directory for better UX
 	scriptDir := filepath.Dir(setupScript)
 	cmd.Dir = scriptDir
-
-	// Inherit environment variables
 	cmd.Env = os.Environ()
 
-	// Run the setup wizard and wait for it to complete
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("failed to launch setup wizard: %w", err)
-	}
-
-	return nil
+	return cmd.Run()
 }
 
 // EnsureConfig checks if configuration exists and launches the setup wizard if not.
