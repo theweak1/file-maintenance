@@ -9,6 +9,7 @@ import (
 
 	"file-maintenance/internal/app"
 	"file-maintenance/internal/logging"
+	"file-maintenance/internal/setup"
 	"file-maintenance/internal/types"
 	"file-maintenance/internal/utils"
 )
@@ -124,6 +125,23 @@ func main() {
 
 	// If you later add Close() (flush buffers / close handles), you can defer it here:
 	// defer log.Close()
+
+	// -----------------------------------------------------------------------------
+	// Check if configuration exists, launch setup wizard if not.
+	//
+	// This ensures first-time users are guided through the setup process.
+	// The setup wizard uses PowerShell GUI to create config.ini.
+	// -----------------------------------------------------------------------------
+	configExists, err := setup.EnsureConfig(cfg.ConfigDir, root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to ensure configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !configExists {
+		fmt.Println("Setup was cancelled or failed. Please run the tool again after configuring.")
+		os.Exit(1)
+	}
 
 	// -----------------------------------------------------------------------------
 	// Run the application.
