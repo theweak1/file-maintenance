@@ -54,8 +54,14 @@ func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, s
 		return nil, "", fmt.Errorf("read config.ini: %w", err)
 	}
 
+	// Remove UTF-8 BOM if present
+	content := string(b)
+	if len(content) > 0 && content[0] == 0xEF && len(content) > 2 && content[1] == 0xBB && content[2] == 0xBF {
+		content = content[3:]
+	}
+
 	// Parse INI sections
-	sections, standaloneLines, err := parseIniSections(string(b))
+	sections, standaloneLines, err := parseIniSections(content)
 	if err != nil {
 		return nil, "", fmt.Errorf("parse config.ini: %w", err)
 	}

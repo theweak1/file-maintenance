@@ -17,6 +17,53 @@ Designed for **unattended execution** (Windows Task Scheduler) and
 
 ---
 
+## 🎯 Getting Started
+
+### First-Time Setup
+
+When you first run the application, a **Setup Wizard** will launch automatically to help you configure the tool.
+
+![Setup Wizard](Images/File%20Maintenance%20Tool%20-%20Setup%20Wizard.png)
+
+The Setup Wizard allows you to:
+
+1. **Set Backup Location** - Choose where to store backups before deletion
+   - Click "Browse..." to select a folder
+   - Can be a local drive (`D:\backups`) or network share (`\\server\share\backups`)
+
+2. **Add Paths to Clean** - Specify which folders/files to process
+   - Enter a path or click "..." to browse
+   - Click "Add" to add to the list
+   - Use the checkbox to enable/disable backup for each path
+
+3. **Save Configuration** - Click "Save & Exit" to save and run
+
+![filled setup wizard](Images/Setup%20Wizard.png)
+
+### Running the Application
+
+After initial setup, simply run:
+
+```powershell
+fileMaintenance.exe -days 7
+```
+
+This will:
+1. Read configuration from `config/config.ini`
+2. Scan configured paths for files older than 7 days
+3. Backup files (if enabled for that path)
+4. Delete original files
+5. Clean up empty directories
+
+### Modifying Configuration
+
+You can modify settings by:
+
+1. **Editing config.ini directly** - Located in `config/config.ini`
+2. **Re-running the Setup Wizard** - Delete `config/config.ini` and launch the application
+
+---
+
 ### 🛠 How It Works
 
 The `file-maintenance` tool performs automated cleanup and optional backups of old files based on configurable rules.
@@ -345,6 +392,8 @@ This keeps folder trees tidy without risk
 - logs/errors_YYYY-MM-DD.log - ERROR only
 - logs/count_YYYY-MM-DD.log - COUNT only — (summary totals)
 
+![Logs folder](Images/Logs%20folder.png)
+
 > [NOTE]
 > Per-path delete counts are logged after the run finishes, so totals remain accurate.
 
@@ -392,6 +441,28 @@ This tool is designed to fail safe:
   - ✅ Network hiccups handled with retries + backoff
   - ✅ Per-path backup control prevents accidental deletion without backup
   - ✅ Popup notification alerts user when backup path is inaccessible
+
+![Backup Location Error Pop-up](Images/Backup%20Location%20Error%20pop-up.png)
+
+### How to Capture Error Popup Screenshots
+
+To take a screenshot of the backup location error popup:
+
+**Option 1: During Setup Wizard**
+1. Run the application for the first time (or delete `config/config.ini`)
+2. In the Setup Wizard, enter an invalid/inaccessible backup path (e.g., `Z:\nonexistent` or `\\invalid-server\share`)
+3. Add a path with backup enabled
+4. Click "Save & Exit"
+5. The error popup will appear
+
+**Option 2: During Regular Run**
+1. Edit `config/config.ini` and change the backup path to an inaccessible location
+2. Run the application
+3. The error popup will appear before any files are processed
+
+> **Note**: The backup location is validated every time the application runs (not just during setup). This ensures the backup destination is accessible before any file operations begin.
+
+#### ✅ Screenshot captured - Error popup during setup wizard
 
 ------------------------------------------------------------------------
 
