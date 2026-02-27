@@ -7,47 +7,51 @@ flowchart TD
         D[Initialize Logger]
     end
 
-    subgraph Configuration[Phase 2: Configuration Loading]
-        E[Read paths.txt]
-        F[Parse Paths with<br/>Backup Settings]
-        G{Any Path Has<br/>Backup Enabled?}
-        H[Read backup.txt]
-        I[Validate Backup Path]
+    subgraph SetupCheck[Phase 2: Setup Check]
+        E{Config Exists?}
+        F[Launch Setup Wizard]
+        G[Exit Cancelled]
     end
 
-    subgraph Worker[Phase 3: Worker Execution]
-        J[Initialize Context<br/>Counters & Channels]
-        K[Start Single Processor<br/>Backup + Delete]
-        L[Start Bounded Walkers<br/>Concurrent Scanning]
-        
-        L --> M[Scan Paths<br/>Find Old Files]
-        M --> N[Enqueue FileJobs<br/>With Per-Path Backup Flag]
-        N --> O{Queue Full}
-        O -->|Yes| N
-        O -->|No| P[Process Jobs Serially]
-        
-        P --> Q{Backup Enabled<br/>For This Job?}
-        Q -->|Yes| R[Copy to Backup]
-        Q -->|No| S[Skip Backup]
-        
-        R --> T[Delete Source File]
-        S --> T
-        
-        T --> U[Update Counters]
-        U --> V[Cleanup Empty Dirs]
-        V --> P
-        
-        P --> W{Stop Conditions}
-        W -->|No| P
-        W -->|Yes| X[Processor Exits]
+    subgraph Configuration[Phase 3: Configuration Loading]
+        H[Read config.ini<br/>Parse backup & paths]
+        I{Any Path Has<br/>Backup Enabled?}
+        J[Validate Backup Path<br/>Check accessibility & write test]
     end
 
-    subgraph Cleanup[Phase 4: Cleanup & Exit]
-        Y[Close Jobs Channel]
-        Z[Drain Remaining Jobs]
-        AA[Log Per-Path Totals]
-        BB[Log Summary Stats]
-        CC[Exit with Code]
+    subgraph Worker[Phase 4: Worker Execution]
+        K[Initialize Context<br/>Counters & Channels]
+        L[Start Single Processor<br/>Backup + Delete]
+        M[Start Bounded Walkers<br/>Concurrent Scanning]
+        
+        M --> N[Scan Paths<br/>Find Old Files]
+        N --> O[Enqueue FileJobs<br/>With Per-Path Backup Flag]
+        O --> P{Queue Full}
+        P -->|Yes| O
+        P -->|No| Q[Process Jobs Serially]
+        
+        Q --> R{Backup Enabled<br/>For This Job?}
+        R -->|Yes| S[Copy to Backup]<br/>Check path accessible]
+        R -->|No| T[Skip Backup]
+        
+        S --> U[Delete Source File]
+        T --> U
+        
+        U --> V[Update Counters]
+        V --> W[Cleanup Empty Dirs]
+        W --> Q
+        
+        Q --> X{Stop Conditions}
+        X -->|No| Q
+        X -->|Yes| Y[Processor Exits]
+    end
+
+    subgraph Cleanup[Phase 5: Cleanup & Exit]
+        Z[Close Jobs Channel]
+        AA[Drain Remaining Jobs]
+        AB[Log Per-Path Totals]
+        AC[Log Summary Stats]
+        AD[Exit with Code]
     end
 
     %% Startup Flow
@@ -55,34 +59,39 @@ flowchart TD
     B --> C
     C --> D
     
-    %% Configuration Flow
+    %% Setup Check Flow
     D --> E
-    E --> F
+    E -->|No| F
     F --> G
-    G -->|No| J
-    G -->|Yes| H
+    E -->|Yes| H
+    G --> AD
+    
+    %% Configuration Flow
     H --> I
-    I -->|Fail| CC
-    I -->|OK| J
+    I -->|No| K
+    I -->|Yes| J
+    J -->|Fail| AD
+    J -->|OK| K
     
     %% Worker Flow
-    J --> K
-    J --> L
+    K --> L
+    K --> M
     
-    L -.-> |Discovered Files| N
-    K -.-> |Processes| P
+    M -.-> |Discovered Files| O
+    L -.-> |Processes| Q
     
     %% Shutdown Flow
-    L --> |Walkers Done| Y
-    Y --> Z
-    Z --> X
-    X --> AA
-    AA --> BB
-    BB --> CC
+    M --> |Walkers Done| Z
+    Z --> AA
+    AA --> Y
+    Y --> AB
+    AB --> AC
+    AC --> AD
 
     %% Styling
     style Startup fill:#e1f5fe
-    style Configuration fill:#fff3e0
-    style Worker fill:#e8f5e9
-    style Cleanup fill:#fce4ec
+    style SetupCheck fill:#fff3e0
+    style Configuration fill:#e8f5e9
+    style Worker fill:#fce4ec
+    style Cleanup fill:#e1f5fe
 ```

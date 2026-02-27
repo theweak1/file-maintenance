@@ -13,67 +13,74 @@ flowchart TD
   D --> E
   E -->|Fail| F
 
-  E -->|OK| G[app.Run]
+  E -->|OK| G{Config Exists?}
+  
+  G -->|No| H[Launch Setup Wizard]
+  H --> I{User Completes Setup?}
+  I -->|No| F
+  I -->|Yes| G
+  
+  G -->|Yes| J[app.Run]
 
-  G --> H[Read folders.txt]
-  H -->|Fail| F
-
-  H --> I{Backups enabled}
-  I -->|No| J[Skip backup validation]
-  I -->|Yes| K[Read backup.txt]
+  J --> K[Read config.ini<br/>Parse backup path and paths list]
   K -->|Fail| F
-  K --> L[CheckBackupPath]
-  L -->|Fail| M[Log fatal and Exit]
-  L -->|OK| N[Start Worker]
 
-  J --> N
+  K --> L{Any Path Has<br/>Backup Enabled?}
+  L -->|No| M[Skip backup validation<br/>Delete only mode]
+  L -->|Yes| N[Validate Backup Path<br/>Check accessibility & write test]
+  
+  N -->|Fail| O[Show Error Popup<br/>Log fatal and Exit]
+  N -->|OK| P[Start Worker]
 
-  N --> O[Init context queues counters]
-  O --> P[Start single processor]
-  O --> Q[Start bounded walkers]
+  M --> P
 
-  Q --> R[For each path in folders.txt]
-  R --> S[Stat path]
-  S -->|Error| T[Log error skip]
-  S -->|Is File| U[Check file age]
-  S -->|Is Directory| V[Walk folder]
+  P --> Q[Init context queues counters]
+  Q --> R[Start single processor]
+  Q --> S[Start bounded walkers]
 
-  U -->|Not old enough| W[Skip]
-  U -->|Old enough| X[Enqueue FileJob with parent dir as folderRoot]
-  X --> W
+  S --> T[For each path in config.ini]
+  T --> U[Stat path]
+  U -->|Error| V[Log error skip]
+  U -->|Is File| W[Check file age]
+  U -->|Is Directory| X[Walk folder]
 
-  V --> Y[Read entry]
-  Y -->|Directory| V
-  Y -->|File| Z[Read file info]
-  Z -->|Error| V
-  Z --> AA{File older than retention}
-  AA -->|No| V
-  AA -->|Yes| AB[Enqueue FileJob]
+  W -->|Not old enough| Y[Skip]
+  W -->|Old enough| Z[Enqueue FileJob with parent dir as folderRoot]
+  Z --> Y
 
-  P --> AC[Receive job]
-  AC --> AD{Stop condition met}
-  AD -->|Yes| AE[Processor exits]
-  AD -->|No| AF[Build backup path<br/>adds date folder]
+  X --> AA[Read entry]
+  AA -->|Directory| X
+  AA -->|File| AB[Read file info]
+  AB -->|Error| X
+  AB --> AC{File older than retention}
+  AC -->|No| X
+  AC -->|Yes| AD[Enqueue FileJob]
 
-  AF --> AG{Backup enabled}
-  AG -->|No| AH[Delete file]
-  AG -->|Yes| AI{Backup exists}
-  AI -->|Yes| AH
-  AI -->|No| AJ[Copy with retry]
+  R --> AE[Receive job]
+  AE --> AF{Stop condition met}
+  AF -->|Yes| AG[Processor exits]
+  AF -->|No| AH[Build backup path<br/>adds date folder]
 
-  AJ -->|Fail| AC
-  AJ -->|Success| AH
+  AH --> AI{Backup enabled for<br/>this path?}
+  AI -->|No| AJ[Delete file]
+  AI -->|Yes| AK{Backup path accessible?}
+  
+  AK -->|No| AJ
+  AK -->|Yes| AL[Copy with retry]
 
-  AH -->|Fail| AC
-  AH -->|Success| AK[Increment per folder count]
-  AK --> AL[Cleanup empty dirs]
-  AL --> AM[Increment processed count]
-  AM --> AC
+  AL -->|Fail| AE
+  AL -->|Success| AJ
 
-  Q --> AN[Walkers finished]
-  AN --> AO[Close jobs channel]
-  AO --> AP[Processor drains and exits]
-  AP --> AQ[Log per folder totals]
-  AQ --> AR[Exit success]
+  AJ -->|Fail| AE
+  AJ -->|Success| AM[Increment per folder count]
+  AM --> AN[Cleanup empty dirs]
+  AN --> AO[Increment processed count]
+  AO --> AE
+
+  S --> AP[Walkers finished]
+  AP --> AQ[Close jobs channel]
+  AQ --> AR[Processor drains and exits]
+  AR --> AS[Log per folder totals]
+  AS --> AT[Exit success]
 
 ```

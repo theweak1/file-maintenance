@@ -1,28 +1,37 @@
 ```mermaid
 flowchart TD
-    A[Start] --> B[Load Config<br/>Read paths.txt]
-    B --> C{Any Path Has<br/>Backup Enabled?}
-    C -->|No| D[Delete Only Mode<br/>No backup validation]
-    C -->|Yes| E[Validate Backup Path]
-    E -->|Valid| F[Worker: Backup Per-Path]
-    E -->|Invalid| G[Exit with Error]
+    A[Start] --> B{Config Exists?}
+    B -->|No| C[Launch Setup Wizard]
+    C --> D{User Completes Setup?}
+    D -->|No| E[Exit Cancelled]
+    D -->|Yes| B
     
-    D --> H[Cleanup Logs]
-    F --> H
+    B -->|Yes| F[Load Config<br/>Read config.ini]
+    F --> G{Any Path Has<br/>Backup Enabled?}
+    G -->|No| H[Delete Only Mode<br/>No backup validation]
+    G -->|Yes| I[Validate Backup Path<br/>Check accessibility & write test]
+    I -->|Valid| J[Worker: Backup Per-Path]
+    I -->|Invalid| K[Show Error Popup<br/>Exit with Error]
     
-    H --> I[Exit Success]
-    G --> J[Exit Failure]
+    H --> L[Cleanup Logs]
+    J --> L
+    L --> M[Exit Success]
+    K --> N[Exit Failure]
 
     %% Styling
     style A fill:#e1f5fe
-    style B fill:#fff3e0
-    style C fill:#e8f5e9
-    style D fill:#fce4ec
-    style E fill:#e8f5e9
-    style F fill:#fce4ec
-    style G fill:#ffcdd2
-    style H fill:#fff3e0
-    style I fill:#c8e6c9
-    style J fill:#ffcdd2
+    style B fill:#e8f5e9
+    style C fill:#fff3e0
+    style D fill:#fff3e0
+    style E fill:#ffcdd2
+    style F fill:#fff3e0
+    style G fill:#e8f5e9
+    style H fill:#fce4ec
+    style I fill:#e8f5e9
+    style J fill:#fce4ec
+    style K fill:#ffcdd2
+    style L fill:#fff3e0
+    style M fill:#c8e6c9
+    style N fill:#ffcdd2
 
 ```
