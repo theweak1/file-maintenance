@@ -181,7 +181,10 @@ Run twice daily (e.g., 6:30 AM / 6:30 PM)
    - **Trigger**: Daily (or your preferred schedule)
    - **Action**: Start a program
    - **Program**: `powershell.exe`
-   - **Arguments**: `-NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath 'C:\path\to\fileMaintenance.exe' -ArgumentList '-days 7 -walkers 1 -max-runtime 30m -cooldown 50ms' -Priority BelowNormal -WindowStyle Hidden -Wait"`
+   - **Arguments**: 
+   ```powershell
+   powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$p = Start-Process -FilePath 'filepath\to\fileMaintenance.exe' -ArgumentList '-days 0 -walkers 1 -max-runtime 30m -cooldown 50ms' -WindowStyle Hidden -PassThru; `$p.PriorityClass='BelowNormal'; `$p.WaitForExit()"
+      ```
 
 ### Task Settings
 

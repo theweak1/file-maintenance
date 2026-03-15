@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"file-maintenance/internal/logging"
 	"file-maintenance/internal/types"
@@ -46,12 +48,12 @@ import (
 //   - Returns an error if [backup] section is missing or has no path.
 //   - No validation of path existence is performed here; that is deferred
 //     to later stages so configuration errors fail fast and explicitly.
-func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, string, error) {
+func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, string, *types.AppConfig, error) {
 	configFile := filepath.Join(configDir, "config.ini")
 
 	b, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, "", fmt.Errorf("read config.ini: %w", err)
+		return nil, "", nil, fmt.Errorf("read config.ini: %w", err)
 	}
 
 	// Remove UTF-8 BOM if present
@@ -63,27 +65,30 @@ func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, s
 	// Parse INI sections
 	sections, standaloneLines, err := parseIniSections(content)
 	if err != nil {
-		return nil, "", fmt.Errorf("parse config.ini: %w", err)
+		return nil, "", nil, fmt.Errorf("parse config.ini: %w", err)
 	}
 
 	// Get backup path from [backup] section
 	backupSection, ok := sections["backup"]
 	if !ok {
-		return nil, "", fmt.Errorf("missing [backup] section in config.ini")
+		return nil, "", nil, fmt.Errorf("missing [backup] section in config.ini")
 	}
 
 	backupPath, ok := backupSection["path"]
 	if !ok || backupPath == "" {
-		return nil, "", fmt.Errorf("missing 'path' key in [backup] section")
+		return nil, "", nil, fmt.Errorf("missing 'path' key in [backup] section")
 	}
 
 	// Get paths from [paths] section
 	pathconfig, err := parsePathsSection(log, sections["paths"], standaloneLines["paths"])
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 
-	return pathconfig, backupPath, nil
+	// Get additional settings from [settings] and [advanced] sections
+	appCfg := parseAdditionalSettings(sections)
+
+	return pathconfig, backupPath, appCfg, nil
 }
 
 // parseIniSections parses a simple INI-style config file.
@@ -280,4 +285,65 @@ func ReadBackupLocation(configDir string) (string, error) {
 	}
 
 	return path, nil
+}
+
+// parseAdditionalSettings parses the [settings] and [advanced] sections from config.
+// Returns an AppConfig with values from the config file (0 values indicate not set).
+func parseAdditionalSettings(sections map[string]map[string]string) *types.AppConfig {
+	cfg := &types.AppConfig{}
+
+	// Parse [settings] section
+	if settings, ok := sections["settings"]; ok {
+		if v, ok := settings["days"]; ok && v != "" {
+			if days, err := strconv.Atoi(v); err == nil {
+				cfg.Days = days
+			}
+		}
+		if v, ok := settings["log-retention"]; ok && v != "" {
+			if logRetention, err := strconv.Atoi(v); err == nil {
+				cfg.LogRetention = logRetention
+			}
+		}
+	}
+
+	// Parse [advanced] section
+	if advanced, ok := sections["advanced"]; ok {
+		if v, ok := advanced["walkers"]; ok && v != "" {
+			if walkers, err := strconv.Atoi(v); err == nil {
+				cfg.Walkers = walkers
+			}
+		}
+		if v, ok := advanced["queue-size"]; ok && v != "" {
+			if queueSize, err := strconv.Atoi(v); err == nil {
+				cfg.QueueSize = queueSize
+			}
+		}
+		if v, ok := advanced["retries"]; ok && v != "" {
+			if retries, err := strconv.Atoi(v); err == nil {
+				cfg.Retries = retries
+			}
+		}
+		if v, ok := advanced["cooldown"]; ok && v != "" {
+			if cooldown, err := strconv.Atoi(v); err == nil {
+				cfg.Cooldown = parseDurationMs(cooldown)
+			}
+		}
+		if v, ok := advanced["max-files"]; ok && v != "" {
+			if maxFiles, err := strconv.Atoi(v); err == nil {
+				cfg.MaxFiles = maxFiles
+			}
+		}
+		if v, ok := advanced["max-runtime"]; ok && v != "" {
+			if maxRuntime, err := strconv.Atoi(v); err == nil {
+				cfg.MaxRuntime = parseDurationMs(maxRuntime)
+			}
+		}
+	}
+
+	return cfg
+}
+
+// parseDurationMs converts milliseconds to time.Duration
+func parseDurationMs(ms int) time.Duration {
+	return time.Duration(ms) * time.Millisecond
 }

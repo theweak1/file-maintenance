@@ -17,13 +17,42 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 	// config.ini contains:
 	// - [backup] section with 'path' key for backup destination
 	// - [paths] section with 'paths' key containing all paths to process
+	// - [settings] section with 'days' and 'log-retention' keys (optional)
+	// - [advanced] section with resource control keys (optional)
 	//
 	// For unattended/scheduled runs we prefer to fail early if config are
 	// missing or malformed rather than doing partial work with unclear outcomes.
 	// -----------------------------------------------------------------------------
-	pathconfig, backupLocation, err := config.ReadAllConfig(cfg.ConfigDir, log)
+	pathconfig, backupLocation, fileCfg, err := config.ReadAllConfig(cfg.ConfigDir, log)
 	if err != nil {
 		return err
+	}
+
+	// Apply config file values with CLI defaults as fallback
+	// If config file has a value (non-zero), use it; otherwise use CLI default
+	if fileCfg.Days != 0 {
+		cfg.Days = fileCfg.Days
+	}
+	if fileCfg.LogRetention != 0 {
+		cfg.LogRetention = fileCfg.LogRetention
+	}
+	if fileCfg.Walkers != 0 {
+		cfg.Walkers = fileCfg.Walkers
+	}
+	if fileCfg.QueueSize != 0 {
+		cfg.QueueSize = fileCfg.QueueSize
+	}
+	if fileCfg.Retries != 0 {
+		cfg.Retries = fileCfg.Retries
+	}
+	if fileCfg.Cooldown != 0 {
+		cfg.Cooldown = fileCfg.Cooldown
+	}
+	if fileCfg.MaxFiles != 0 {
+		cfg.MaxFiles = fileCfg.MaxFiles
+	}
+	if fileCfg.MaxRuntime != 0 {
+		cfg.MaxRuntime = fileCfg.MaxRuntime
 	}
 
 	// Log paths and their backup settings.
