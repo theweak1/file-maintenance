@@ -4,80 +4,88 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"file-maintenance/internal/logging"
 	"file-maintenance/internal/types"
 )
 
-// ReadAllConfig reads all configuration from a single config.ini file.
+// ReadAllConfig reads all runtime configuration from config.ini.
 //
-// File Format:
+// Required sections:
 //
-//	; Comments start with semicolon
 //	[backup]
 //	path=D:\backups
 //
 //	[paths]
-//	; One entry per line (can be a file OR a folder)
-//	; Empty lines are ignored
-//	; Lines starting with ';' are treated as comments
-//	; Each line can have an optional backup setting: "path, yes" or "path, no"
-//	;
-//	; Format:
-//	;   - path                    - uses default backup behavior (backup enabled)
-//	;   - path, yes               - backup enabled for this path
-//	;   - path, no                - backup disabled for this path
-//	;
-//
-// Examples:
-//
-//	C	;:\temp\old, yes
+//	C:\temp\old, yes
 //	\\server\share\incoming, no
 //
-// This allows operators to:
-// - Delete all old files from a folder (just specify the folder path)
-// - Delete specific files (just specify the full file path)
-// - Temporarily disable paths or add notes without changing code
-// - Control backup behavior per-path using "yes" or "no" after a comma
+// Optional sections:
+//
+//	[settings]
+//	days=7
+//	log-retention=30
+//
+//	[advanced]
+//	walkers=1
+//	queue-size=300
+//	retries=2
+//	cooldown=50
+//	max-files=0
+//	max-runtime=30
+//
+// Path entries support both folders and individual files. Each path can opt in
+// or out of backup with yes/no. If omitted, backup defaults to enabled.
 //
 // Errors:
 //   - Returns an error if config.ini cannot be read.
 //   - Returns an error if [backup] section is missing or has no path.
 //   - No validation of path existence is performed here; that is deferred
 //     to later stages so configuration errors fail fast and explicitly.
-func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, string, error) {
+func ReadAllConfig(configDir string, log *logging.Logger) ([]types.PathConfig, string, *types.AppConfig, error) {
 	configFile := filepath.Join(configDir, "config.ini")
 
 	b, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, "", fmt.Errorf("read config.ini: %w", err)
+		return nil, "", nil, fmt.Errorf("read config.ini: %w", err)
+	}
+
+	// Remove UTF-8 BOM if present
+	content := string(b)
+	if len(content) > 0 && content[0] == 0xEF && len(content) > 2 && content[1] == 0xBB && content[2] == 0xBF {
+		content = content[3:]
 	}
 
 	// Parse INI sections
-	sections, standaloneLines, err := parseIniSections(string(b))
+	sections, standaloneLines, err := parseIniSections(content)
 	if err != nil {
-		return nil, "", fmt.Errorf("parse config.ini: %w", err)
+		return nil, "", nil, fmt.Errorf("parse config.ini: %w", err)
 	}
 
 	// Get backup path from [backup] section
 	backupSection, ok := sections["backup"]
 	if !ok {
-		return nil, "", fmt.Errorf("missing [backup] section in config.ini")
+		return nil, "", nil, fmt.Errorf("missing [backup] section in config.ini")
 	}
 
 	backupPath, ok := backupSection["path"]
 	if !ok || backupPath == "" {
-		return nil, "", fmt.Errorf("missing 'path' key in [backup] section")
+		return nil, "", nil, fmt.Errorf("missing 'path' key in [backup] section")
 	}
 
 	// Get paths from [paths] section
 	pathconfig, err := parsePathsSection(log, sections["paths"], standaloneLines["paths"])
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 
-	return pathconfig, backupPath, nil
+	// Get additional settings from [settings] and [advanced] sections
+	appCfg := parseAdditionalSettings(sections)
+
+	return pathconfig, backupPath, appCfg, nil
 }
 
 // parseIniSections parses a simple INI-style config file.
@@ -274,4 +282,65 @@ func ReadBackupLocation(configDir string) (string, error) {
 	}
 
 	return path, nil
+}
+
+// parseAdditionalSettings parses the [settings] and [advanced] sections from config.
+// Returns an AppConfig with values from the config file (0 values indicate not set).
+func parseAdditionalSettings(sections map[string]map[string]string) *types.AppConfig {
+	cfg := &types.AppConfig{}
+
+	// Parse [settings] section
+	if settings, ok := sections["settings"]; ok {
+		if v, ok := settings["days"]; ok && v != "" {
+			if days, err := strconv.Atoi(v); err == nil {
+				cfg.Days = days
+			}
+		}
+		if v, ok := settings["log-retention"]; ok && v != "" {
+			if logRetention, err := strconv.Atoi(v); err == nil {
+				cfg.LogRetention = logRetention
+			}
+		}
+	}
+
+	// Parse [advanced] section
+	if advanced, ok := sections["advanced"]; ok {
+		if v, ok := advanced["walkers"]; ok && v != "" {
+			if walkers, err := strconv.Atoi(v); err == nil {
+				cfg.Walkers = walkers
+			}
+		}
+		if v, ok := advanced["queue-size"]; ok && v != "" {
+			if queueSize, err := strconv.Atoi(v); err == nil {
+				cfg.QueueSize = queueSize
+			}
+		}
+		if v, ok := advanced["retries"]; ok && v != "" {
+			if retries, err := strconv.Atoi(v); err == nil {
+				cfg.Retries = retries
+			}
+		}
+		if v, ok := advanced["cooldown"]; ok && v != "" {
+			if cooldown, err := strconv.Atoi(v); err == nil {
+				cfg.Cooldown = parseDurationMs(cooldown)
+			}
+		}
+		if v, ok := advanced["max-files"]; ok && v != "" {
+			if maxFiles, err := strconv.Atoi(v); err == nil {
+				cfg.MaxFiles = maxFiles
+			}
+		}
+		if v, ok := advanced["max-runtime"]; ok && v != "" {
+			if maxRuntime, err := strconv.Atoi(v); err == nil {
+				cfg.MaxRuntime = parseDurationMs(maxRuntime)
+			}
+		}
+	}
+
+	return cfg
+}
+
+// parseDurationMs converts milliseconds to time.Duration
+func parseDurationMs(ms int) time.Duration {
+	return time.Duration(ms) * time.Millisecond
 }

@@ -7,23 +7,57 @@ import (
 	"file-maintenance/internal/logging"
 	"file-maintenance/internal/maintenance"
 	"file-maintenance/internal/types"
-	"file-maintenance/internal/utils"
 )
 
-func Run(cfg types.AppConfig, log *logging.Logger) error {
+type criticalNotifier interface {
+	ShowCritical(title, message string)
+}
+
+func Run(cfg types.AppConfig, log *logging.Logger, notifier criticalNotifier) error {
 	// -----------------------------------------------------------------------------
 	// Read all configuration from config.ini (single file).
 	//
 	// config.ini contains:
 	// - [backup] section with 'path' key for backup destination
-	// - [paths] section with 'paths' key containing all paths to process
+	// - [paths] section containing all paths to process
+	// - optional [settings] and [advanced] sections for runtime defaults
 	//
 	// For unattended/scheduled runs we prefer to fail early if config are
 	// missing or malformed rather than doing partial work with unclear outcomes.
 	// -----------------------------------------------------------------------------
-	pathconfig, backupLocation, err := config.ReadAllConfig(cfg.ConfigDir, log)
+	pathconfig, backupLocation, fileCfg, err := config.ReadAllConfig(cfg.ConfigDir, log)
 	if err != nil {
 		return err
+	}
+
+	// Apply non-zero config.ini values over CLI/default values.
+	//
+	// This lets the setup wizard persist common runtime settings while keeping CLI
+	// flags available as defaults or explicit overrides when config values are not
+	// provided. Zero values mean "not set" for these optional sections.
+	if fileCfg.Days != 0 {
+		cfg.Days = fileCfg.Days
+	}
+	if fileCfg.LogRetention != 0 {
+		cfg.LogRetention = fileCfg.LogRetention
+	}
+	if fileCfg.Walkers != 0 {
+		cfg.Walkers = fileCfg.Walkers
+	}
+	if fileCfg.QueueSize != 0 {
+		cfg.QueueSize = fileCfg.QueueSize
+	}
+	if fileCfg.Retries != 0 {
+		cfg.Retries = fileCfg.Retries
+	}
+	if fileCfg.Cooldown != 0 {
+		cfg.Cooldown = fileCfg.Cooldown
+	}
+	if fileCfg.MaxFiles != 0 {
+		cfg.MaxFiles = fileCfg.MaxFiles
+	}
+	if fileCfg.MaxRuntime != 0 {
+		cfg.MaxRuntime = fileCfg.MaxRuntime
 	}
 
 	// Log paths and their backup settings.
@@ -63,8 +97,8 @@ func Run(cfg types.AppConfig, log *logging.Logger) error {
 		// them somewhere safe first.
 		if !maintenance.CheckBackupPath(backupLocation) {
 			errMsg := fmt.Sprintf("Backup path is not accessible: %s\n\nPlease check path and permissions.", backupLocation)
-			// Show popup notification for the user
-			utils.ShowPopup("Backup Location Error", errMsg)
+			// Show a platform-specific critical notification for the user.
+			notifier.ShowCritical("Backup Location Error", errMsg)
 
 			return fmt.Errorf("backup path not accessible: %s", backupLocation)
 		}

@@ -1,79 +1,64 @@
-```mermaid 
+```mermaid
 flowchart TD
   A[Start Application]
-  B[Parse CLI Flags]
-  C[Resolve default paths<br/>exeDir config logs]
-  D[Build AppConfig from flags]
-  E[Initialize Logger]
-  F[Print stderr and Exit 1]
+  B[platform.Current]
+  C[Resolve exe directory]
+  D[Set portable defaults<br/>exe/config and exe/logs]
+  E[Parse CLI flags]
+  F[Build AppConfig]
+  G[Initialize Logger]
+  H{Logger OK?}
+  I[Print stderr and Exit 1]
 
-  A --> B
-  B --> C
-  C --> D
-  D --> E
-  E -->|Fail| F
+  A --> B --> C --> D --> E --> F --> G --> H
+  H -->|No| I
+  H -->|Yes| J[platform.EnsureConfig]
 
-  E -->|OK| G[app.Run]
+  J --> K{config.ini exists?}
+  K -->|Yes| N[app.Run]
+  K -->|No on Windows| L[Launch embedded PowerShell setup wizard]
+  L --> M{Wizard created config.ini?}
+  M -->|No| I
+  M -->|Yes| N
+  K -->|No on Linux/macOS| I
 
-  G --> H[Read folders.txt]
-  H -->|Fail| F
+  N --> O[Read config.ini]
+  O --> P[Parse backup path]
+  O --> Q[Parse configured paths]
+  O --> R[Parse optional settings and advanced values]
+  R --> S[Apply non-zero config values]
 
-  H --> I{Backups enabled}
-  I -->|No| J[Skip backup validation]
-  I -->|Yes| K[Read backup.txt]
-  K -->|Fail| F
-  K --> L[CheckBackupPath]
-  L -->|Fail| M[Log fatal and Exit]
-  L -->|OK| N[Start Worker]
+  S --> T{Any configured path<br/>has backup enabled?}
+  T -->|No| U[Skip backup validation]
+  T -->|Yes| V[CheckBackupPath]
+  V -->|Fail| W[Show critical notification and Exit 1]
+  V -->|OK| X[Start Worker]
+  U --> X
 
-  J --> N
+  X --> Y[Initialize counters, queue, context]
+  Y --> Z[Start single file processor]
+  Y --> AA[Start bounded walkers]
 
-  N --> O[Init context queues counters]
-  O --> P[Start single processor]
-  O --> Q[Start bounded walkers]
+  AA --> AB[Walk configured paths]
+  AB --> AC[Find files older than retention]
+  AC --> AD[Enqueue FileJob]
 
-  Q --> R[For each path in folders.txt]
-  R --> S[Stat path]
-  S -->|Error| T[Log error skip]
-  S -->|Is File| U[Check file age]
-  S -->|Is Directory| V[Walk folder]
+  Z --> AE[Receive FileJob]
+  AE --> AF{Stop condition met?}
+  AF -->|Yes| AG[Processor exits]
+  AF -->|No| AH{Backup enabled for job?}
+  AH -->|Yes| AI[Build backup path and copy with retry]
+  AI -->|Fail| AE
+  AI -->|Success| AJ[Delete source file]
+  AH -->|No| AJ
+  AJ --> AK[Increment counts]
+  AK --> AL[Cleanup empty directories]
+  AL --> AE
 
-  U -->|Not old enough| W[Skip]
-  U -->|Old enough| X[Enqueue FileJob with parent dir as folderRoot]
-  X --> W
-
-  V --> Y[Read entry]
-  Y -->|Directory| V
-  Y -->|File| Z[Read file info]
-  Z -->|Error| V
-  Z --> AA{File older than retention}
-  AA -->|No| V
-  AA -->|Yes| AB[Enqueue FileJob]
-
-  P --> AC[Receive job]
-  AC --> AD{Stop condition met}
-  AD -->|Yes| AE[Processor exits]
-  AD -->|No| AF[Build backup path<br/>adds date folder]
-
-  AF --> AG{Backup enabled}
-  AG -->|No| AH[Delete file]
-  AG -->|Yes| AI{Backup exists}
-  AI -->|Yes| AH
-  AI -->|No| AJ[Copy with retry]
-
-  AJ -->|Fail| AC
-  AJ -->|Success| AH
-
-  AH -->|Fail| AC
-  AH -->|Success| AK[Increment per folder count]
-  AK --> AL[Cleanup empty dirs]
-  AL --> AM[Increment processed count]
-  AM --> AC
-
-  Q --> AN[Walkers finished]
-  AN --> AO[Close jobs channel]
-  AO --> AP[Processor drains and exits]
-  AP --> AQ[Log per folder totals]
-  AQ --> AR[Exit success]
-
+  AA --> AM[Walkers finished]
+  AM --> AN[Close jobs channel]
+  AN --> AO[Processor drains or exits]
+  AO --> AP[Log per-path totals]
+  AP --> AQ[Prune old logs]
+  AQ --> AR[Exit]
 ```
