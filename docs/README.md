@@ -1,412 +1,340 @@
 # File Maintenance Tool
 
-A **safe, scheduled file maintenance utility** for Windows that:
+A safe, scheduled file maintenance utility designed for Windows-first unattended cleanup while keeping the core logic isolated behind OS-specific platform abstractions.
 
-- Scans configured paths
-- Identifies files older than a given number of days
-- Optionally backs them up to a local or network location (per-path setting)
-- Deletes the original files
-- Cleans up empty directories
-- Manages log retention
-- Runs with **bounded resource usage** (safe for busy PCs and SMB
-    shares)
+The tool can:
 
-Designed for **unattended execution** (Windows Task Scheduler) and
-**network environments**.
-
+- Scan configured file/folder paths.
+- Identify files older than the configured retention period.
+- Back up eligible files before deletion when backup is enabled for that path.
+- Delete files after a successful backup, or delete directly when backup is intentionally disabled for that path.
+- Clean up empty directories without crossing the configured path root.
+- Write operational logs with retention cleanup.
+- Launch a Windows setup wizard on first run when `config.ini` is missing.
 
 ---
 
-### 🛠 How It Works
+## Current Default Layout
 
-The `file-maintenance` tool performs automated cleanup and optional backups of old files based on configurable rules.
+The application currently uses portable defaults beside the executable:
 
-The process follows a predictable and safe execution flow:
+```text
+fileMaintenance.exe
+config/
+  config.ini
+  logging.json        # optional
+logs/
+  maintenance_YYYY-MM-DD.log
+  errors_YYYY-MM-DD.log
+  count_YYYY-MM-DD.log
+```
 
-1. **Startup & Configuration**
-   - CLI flags are parsed
-   - Configuration files are loaded
-   - Logging is initialized
-   - Critical paths are validated
+This is intentional. The platform package still supports OS-conventional directories such as AppData on Windows, but `cmd/main/main.go` currently defaults to `<exe>/config` and `<exe>/logs` to make Task Scheduler deployments and portable runs easier to reason about.
 
-2. **Safety Checks**
-   - Ensures target paths exist
-   - Verifies backup destination is accessible (if any paths have backup enabled)
-   - Displays popup notification if backup location is inaccessible
-   - Terminates early on fatal misconfiguration
+Override paths with:
 
-3. **Maintenance Worker**
-   - Initializes execution context, queues, and counters
-   - Captures a run-specific backup date (DDMmmYY)
-   - Starts:
-     - Bounded path walkers (discovery only)
-     - A single processor goroutine (file operations)
-
-4. **Backup & Cleanup**
-   - Eligible files are enqueued for processing
-   - Backup destination path is built as:
-
-    ```text
-    backupRoot/DDMmmYY/<folder-name>/relative-path
-    ```
-   - Files are copied using streaming I/O with retry + backoff
-   - Original files are deleted only after successful backup (unless backup is disabled for that path)
-   - Empty directories are cleaned bottom-up
-
-1. **Logging & Exit**
-   - All actions are logged (success, warning, error)
-   - Logs are flushed before clean exit
+```powershell
+fileMaintenance.exe -config-dir "C:\path\to\config" -log-dir "C:\path\to\logs"
+```
 
 ---
 
-<!-- ![Execution Flow](diagrams/execution-flow.svg) -->
-![Execution Flow](diagrams/execution-flow-high-level.svg)
+## First-Time Setup
 
-> The execution flow reflects a **single-processor design** for file operations:
-> path scanning may be concurrent, but backup and deletion always occur one file at a time.
-> Backups are grouped under a per-run date folder (`DDMmmYY`).
+On Windows, startup checks whether this file exists:
 
-## 🚩 Command-Line Flags
+```text
+<config-dir>/config.ini
+```
 
-### Retention & Deletion
+If it is missing, the Windows platform implementation launches the embedded PowerShell setup wizard. The wizard creates `config.ini` and the application continues only if the file was created successfully.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-days` | `7` | Only files older than this many days are eligible for deletion |
-| `-log-retention` | `30` | Log retention in days |
+On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` is missing, the platform implementation returns `false` and the application exits safely without processing files.
 
-### Paths & Configuration
+---
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-config-dir` | `<exe>/config` | Config directory |
-| `-log-dir` | `<exe>/logs` | Log directory |
-| `-no-logs` | `false` | Console-only logging |
+## How It Works
+
+1. **Startup**
+   - Resolve the active OS platform implementation.
+   - Resolve the executable directory.
+   - Set portable default paths for `config/` and `logs/`.
+   - Parse CLI flags.
+   - Initialize logging.
+
+2. **Configuration Check**
+   - Call `platform.EnsureConfig(configDir, exeDir)`.
+   - On Windows, launch the setup wizard if `config.ini` is missing.
+   - On Linux/macOS, exit safely if `config.ini` is missing.
+
+3. **Configuration Loading**
+   - Read `config.ini`.
+   - Parse `[backup]`, `[paths]`, and optional `[settings]` / `[advanced]` sections.
+   - Apply non-zero config values over CLI/default values.
+
+4. **Safety Checks**
+   - Determine whether any configured path has backup enabled.
+   - If backup is required, validate the backup destination before deleting anything.
+   - Show a platform-specific critical notification if the backup path is inaccessible.
+
+5. **Maintenance Worker**
+   - Scan configured paths using bounded walkers.
+   - Process file operations through one serialized processor.
+   - Copy before delete when backup is enabled.
+   - Delete directly only when backup is disabled for that path.
+   - Track per-path delete counts.
+
+6. **Cleanup and Exit**
+   - Remove empty directories safely.
+   - Prune old logs according to log retention.
+   - Exit with an error code when fatal configuration or worker errors occur.
+
+---
+
+## Execution Flow
+
+The high-level Mermaid source is maintained in:
+
+```text
+docs/diagrams/execution-flow-high-level.md
+```
+
+The detailed execution flow is maintained in:
+
+```text
+docs/diagrams/execution-flow.md
+```
+
+The execution flow uses concurrent path discovery but serialized file operations. This avoids uncontrolled SMB/network load and keeps backup/delete behavior predictable.
+
+---
+
+## Command-Line Flags
+
+### Retention and Logging
+
+| Flag             | Default | Description                                        |
+| ---------------- | ------: | -------------------------------------------------- |
+| `-days`          |     `7` | Only files older than this many days are eligible. |
+| `-log-retention` |    `30` | Number of days to keep log files.                  |
+| `-no-logs`       | `false` | Disable file logging and write to stdout/stderr.   |
+
+### Paths
+
+| Flag          | Default        | Description                                                    |
+| ------------- | -------------- | -------------------------------------------------------------- |
+| `-config-dir` | `<exe>/config` | Directory containing `config.ini` and optional `logging.json`. |
+| `-log-dir`    | `<exe>/logs`   | Directory where log files are written.                         |
 
 ### Resource Controls
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-walkers` | `1` | Concurrent path walkers |
-| `-queue-size` | `300` | Job queue size |
-| `-max-files` | `0` | Max files per run (0 = unlimited)|
-| `-max-runtime` | `30m` | Max runtime |
-| `-cooldown` | `0` | Cooldown between files |
-| `-retries` | `2` | Copy retries |
+| Flag           | Default | Description                                                    |
+| -------------- | ------: | -------------------------------------------------------------- |
+| `-walkers`     |     `1` | Number of concurrent path walkers.                             |
+| `-queue-size`  |   `300` | Buffered job queue size.                                       |
+| `-max-files`   |     `0` | Maximum jobs to handle in one run. `0` means unlimited.        |
+| `-max-runtime` |   `30m` | Maximum run duration. `0` means unlimited.                     |
+| `-cooldown`    |     `0` | Delay after each processed job. Useful for SMB/network pacing. |
+| `-retries`     |     `2` | Number of backup copy retries.                                 |
 
-------------------------------------------------------------------------
+---
 
-## ✨ Key Features
-
-- ✅ **Backup before delete** (configurable per-path)
-- 🗂 **Date-based backups**
-  - One folder per run (`DDMmmYY`)
-  - Preserves full relative directory structure
-- 🧠 **Path-safe backups**
-  - prevents directory traversal
-  - Rejects paths escaping the source root
-- 🧵 **Bounded concurrency**
-  - Parallel path scanning (configurable)
-  - Serialized file operations (copy/delete one file at a time)
-- 🌐 **Network-friendly**
-  - Streaming file copy (low RAM)
-  - Retry + backoff for SMB hiccups
-  - Optional cooldown between file operations
-- 🧹 **Automatic cleanup**
-  - Deletes empty directories (bottom-up, safe boundary)
-  - Log retention management
-- 🗃️ **Configurable logging**
-  - File logging or console-only (`-no-logs`)
-  - Per-level enable/disable via `logging.json`
-- 🎯 **Per-path backup control**
-  - Each path can have backup enabled or disabled independently
-  - Controlled via `config.ini` with simple `yes/no` syntax
-- 🔔 **User notifications**
-  - Popup alerts when backup location is inaccessible
-  - Critical errors shown even in unattended runs (Task Scheduler)
-  - Error icon indicates issues requiring attention
-
-![Backup Location Error Pop-up](Images/Backup%20Location%20Error%20pop-up.png)
-
-------------------------------------------------------------------------
-
-## 📁 Project Structure
-
-```
-    .
-    ├── cmd/
-    │   └── main/              # CLI entry point
-    ├── internal/
-    │   ├── app/               # High-level application orchestration
-    │   ├── config/            # Reading config.ini and logging.json
-    │   ├── logging/           # Thread-safe logger
-    │   ├── maintenance/       # Core logic (scan, backup, delete, cleanup)
-    │   ├── types/             # AppConfig definition
-    │   └── utils/             # Helpers (exe path resolution, etc.)
-    ├── config/
-    │   ├── config.ini         # All configuration (backup path + paths list)
-    │   └── logging.json
-    └── build.ps1             # Helpers (Build, run, smoke, coverage helpers)
-```
-
-------------------------------------------------------------------------
-
-## ⚙️ Configuration Files
-These Files are required for the program to run
+## Configuration
 
 ### `config/config.ini`
 
-Single configuration file containing both backup destination and paths list.
-
-#### Format
-
-```ini
-[backup]
-path=<backup-destination>
-
-[paths]
-path1, yes|no
-path2, yes|no
-```
-
-#### Sections
-
-| Section | Key | Description |
-|---------|-----|-------------|
-| `[backup]` | `path` | Backup destination root path |
-| `[paths]` | (standalone lines) | Paths to process with per-path backup control |
-
-#### Paths Format
-
-```
-path, yes|no
-```
-
-- `path`: the file or folder to process
-- `yes`: enable backup before deletion
-- `no`: delete without backup
-
-> **Alternative Format**: You can also use the `paths=` key prefix:
-> ```
-> paths=path, yes|no
-> ```
-
-Both formats can be mixed in the same config file.
-
-#### Path Types Supported
-
-| Type | Description | Example |
-|------|-------------|---------|
-| **Folder** | All files inside the folder (recursively) are evaluated | `C:\Temp\OldFiles, yes` |
-| **File** | The specific file is evaluated directly | `C:\Data\Images\old-photo.jpg, no` |
-
-#### Examples
+Required sections:
 
 ```ini
 [backup]
 path=D:\backups
 
 [paths]
-# Folders with backup enabled - delete all old files after backing up
 C:\Temp\OldFiles, yes
-\\server\share\incoming, yes
-
-# Folders without backup - delete files directly (use with caution)
 C:\Temp\ToDelete, no
-
-# Specific files with backup
-C:\Data\Images\old-photo.jpg, yes
-
-# Specific files without backup
-C:\Logs\debug.log, no
-
-# Alternative format with 'paths=' prefix (can be mixed)
-paths=C:\Temp\AltFolder, yes
 ```
 
-- Empty lines are ignored
-- Lines starting with `;` or `#` are treated as comments
-- Individual files must meet the age criteria (unless `-days 0` is used)
-- Backup is enabled by default if not specified
+Optional sections:
+
+```ini
+[settings]
+days=7
+log-retention=30
+
+[advanced]
+walkers=1
+queue-size=300
+retries=2
+cooldown=50
+max-files=0
+max-runtime=30
+```
+
+### `[backup]`
+
+| Key    | Description                                                |
+| ------ | ---------------------------------------------------------- |
+| `path` | Backup destination root path. Can be local or network/SMB. |
+
+### `[paths]`
+
+Each standalone line is a file or folder path followed by optional backup behavior:
+
+```ini
+path, yes|no
+```
+
+| Value   | Meaning                                              |
+| ------- | ---------------------------------------------------- |
+| `yes`   | Back up eligible files before deletion.              |
+| `no`    | Delete eligible files without backup. Use carefully. |
+| omitted | Backup defaults to enabled.                          |
+
+Supported path types:
+
+| Type   | Example                 | Behavior                                       |
+| ------ | ----------------------- | ---------------------------------------------- |
+| Folder | `C:\Temp\OldFiles, yes` | Recursively evaluates files inside the folder. |
+| File   | `C:\Logs\old.log, no`   | Evaluates that file directly.                  |
+
+Comments and blank lines are ignored. Lines beginning with `;` or `#` are treated as comments.
 
 ### `config/logging.json`
 
-Enable/disable log levels.
+Optional logging configuration:
+
 ```json
-    {
-        "DEBUG": false,
-        "COUNT": true,
-        "INFO": true,
-        "WARN": true,
-        "ERROR": true,
-        "SUCCESS": true,
-        "FATAL": true
-    }
+{
+  "DEBUG": false,
+  "COUNT": true,
+  "INFO": true,
+  "WARN": true,
+  "ERROR": true,
+  "SUCCESS": true,
+  "FATAL": true
+}
 ```
-- `COUNT` is used for summary metrics (ex: deleted files per folder)
-- Unknown levels default to enabled (fail-open policy)
 
-------------------------------------------------------------------------
+Unknown log levels default to enabled.
 
-## 📦 Backup Layout (Important)
+---
 
-Backups are written using a date-based folder structure that preserves the original directory hierarchy.
+## Backup Layout
 
-Destination format:
+Backups are written under a run-date folder:
 
 ```text
-    <backupRoot>/<DDMmmYY>/<folder-name>/<relative folder structure>/<filename>
+<backupRoot>/<DDMmmYY>/<folder-name>/<relative-path>/<filename>
 ```
 
 Example:
+
 ```text
-Source file:
+Source:
 C:\Data\Images\2024\Camera\IMG001.jpg
 
-Backup destination:
-\\server\share\backups\30Jan26\Camera\IMG001.jpg
+Backup:
+D:\backups\30Jan26\Images\2024\Camera\IMG001.jpg
 ```
 
-Why this design:
-    - Keeps backups grouped per run/day
-    - Includes folder name for clear logging and easy restore
-    - Preserves original folder structure for easy restore
-    - Prevents filename collisions
-    - Makes auditing and cleanup straightforward
-    - The backup date folder is determined per run.
-All files processed in the same run share the same DDMmmYY folder.
+The backup path builder validates that files stay within the configured source root and prevents directory traversal into unintended destinations.
 
-## 🚀 Usage
+---
 
-### Basic run
-```powershell
-    fileMaintenance.exe -days 7
-```
-Deletes files older than 7 days (after backing them up).
+## Logging
 
-### Per-path backup control
-```powershell
-    fileMaintenance.exe -days 7
-```
+Default file logs:
 
-Configure backup behavior in `config.ini`:
-```ini
-[paths]
-C:\Temp\OldFiles, yes    # Backup enabled
-C:\Temp\ToDelete, no      # Backup disabled
-```
-
-### Resource-controlled run (recommended)
-```powershell
-    fileMaintenance.exe -days 7 -walkers 1 -queue-size 300 -max-files 2500 -max-runtime 30m -cooldown 50ms -retries 2
-```
-Ideal for:
-  - busy workstations
-  - large image sets
-  - network (SMB) destinations
-
-### Console-only logging
-```powershell
-    fileMaintenance.exe -days 0 -no-logs
-```
-------------------------------------------------------------------------
-
-## 🧠 Concurrency Model (Important)
-
-- Path scanning
-Parallel, bounded by `-walkers` (default: 1)
-- File operations (copy + delete)
-**always serialized** (one file at a time)
-
-Why:
-    - Prevents SMB saturation
-    - Keeps CPU + disk usage predictable
-    - Safer for large files (images, media)
-
-------------------------------------------------------------------------
-
-## 🧹 Empty Directory Cleanup
-
-After a file is deleted:
-  - Parent directories are removed **only if empty**
-  - Cleanup proceeds bottom-up
-  - Deletion never crosses the configured path root
-  - Path comparisons are Windows-safe (case-insensitive)
-
-This keeps folder trees tidy without risk
-
-------------------------------------------------------------------------
-
-## 🗃️ Logging
-
-### File mode (default)
-
-- logs/maintenance_YYYY-MM-DD.log - all levels
-- logs/errors_YYYY-MM-DD.log - ERROR only
-- logs/count_YYYY-MM-DD.log - COUNT only — (summary totals)
-
-> [NOTE]
-> Per-path delete counts are logged after the run finishes, so totals remain accurate.
-
-### Console mode
-
-- Enabled with `-no-logs`
-- Useful for development and smoke tests
-
-Log retention
 ```text
-    log-retention 30
+logs/maintenance_YYYY-MM-DD.log   # all enabled levels
+logs/errors_YYYY-MM-DD.log        # ERROR/FATAL-focused output
+logs/count_YYYY-MM-DD.log         # summary counts
 ```
-Deletes log files older than N days (best-effort, non-fatal).
 
-------------------------------------------------------------------------
+Per-path delete counts are logged after processing completes so totals reflect actual successful deletions.
 
-## 🕒 Windows Task Scheduler (Recommended Setup)
+---
 
-### Suggested schedule
+## OS-Specific Platform Abstraction
 
-- Twice daily (e.g., 6:30 AM / 6:30 PM)
+The platform layer lives under `internal/platform`:
 
-Example launch command:
+```text
+internal/platform/
+  platform.go
+  current_windows.go
+  current_linux.go
+  current_darwin.go
+  windows/
+  linux/
+  macos/
+```
+
+The core application depends on the `Platform` interface instead of importing OS-specific packages directly.
+
+Current responsibilities:
+
+- `ShowCritical(title, message string)`
+- `DefaultConfigDir(appName string) (string, error)`
+- `DefaultLogDir(appName string) (string, error)`
+- `EnsureConfig(configDir string, exeDir string) (bool, error)`
+
+Windows provides the setup wizard implementation. Linux and macOS currently perform a safe config existence check only.
+
+---
+
+## Windows Task Scheduler Example
+
 ```powershell
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-    Start-Process -FilePath "C:\path\fileMaintenance.exe" `
-    -ArgumentList "-days 7 -walkers 1 -max-runtime 30m -cooldown 50ms" `
-    -Priority BelowNormal -WindowStyle Hidden -Wait
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
+Start-Process -FilePath "C:\path\fileMaintenance.exe" `
+-ArgumentList "-days 7 -walkers 1 -max-runtime 30m -cooldown 50ms" `
+-Priority BelowNormal -WindowStyle Hidden -Wait
 ```
-Task options:
-  - ✅ Run whether user is logged on or not
-  - ✅ Run as soon as possible after a missed start
-  - ✅ Stop task if running longer than 1 hour
 
-------------------------------------------------------------------------
+Recommended task options:
 
-## 🔐 Safety Guarantees
+- Run whether user is logged on or not.
+- Run as soon as possible after a missed start.
+- Stop task if running longer than expected.
 
-This tool is designed to fail safe:
-  - ❌ No deletion if backup root is inaccessible (when backup is enabled)
-  - ❌ No deletion if backup copy fails
-  - ❌ No path traversal outside backup root
-  - ❌ No directory deletion above configured path root
-  - ❌ No unbounded goroutines or memory growth
-  - ✅ Network hiccups handled with retries + backoff
-  - ✅ Per-path backup control prevents accidental deletion without backup
-  - ✅ Popup notification alerts user when backup path is inaccessible
+---
 
-------------------------------------------------------------------------
+## Safety Guarantees
 
-## 🧪 Development & Testing
+- No deletion occurs if backup is enabled and the backup root is inaccessible.
+- No deletion occurs if backup copy fails.
+- File operations are serialized to reduce network and disk contention.
+- Directory cleanup does not cross the configured path root.
+- Resource controls prevent unbounded walking or job queue growth.
+- Critical backup-location failures trigger platform-specific user notification.
 
-### Smoke test
+---
+
+## Development and Testing
+
+Run tests:
+
 ```powershell
-    .\build.ps1 smoke
+go test ./...
 ```
-- Builds the binary
-- Runs with `-no-logs`
-- Verifies config exist
 
-------------------------------------------------------------------------
+Smoke test:
 
-## 📜 License
+```powershell
+.\build.ps1 smoke
+```
+
+Build:
+
+```powershell
+.\build.ps1 build
+```
+
+Note: tests involving Windows drive-letter behavior should be run on Windows or guarded with Windows-specific build tags.
+
+---
+
+## License
 
 Internal / private use.

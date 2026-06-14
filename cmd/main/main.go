@@ -9,22 +9,36 @@ import (
 
 	"file-maintenance/internal/app"
 	"file-maintenance/internal/logging"
+	"file-maintenance/internal/platform"
 	"file-maintenance/internal/types"
 	"file-maintenance/internal/utils"
 )
 
+const appName = "file-maintenance"
+
 func main() {
 	// -----------------------------------------------------------------------------
-	// Resolve the "app root" (directory of the running executable).
+	// Resolve the current platform implementation.
+	//
+	// Platform owns OS-specific behavior such as:
+	// - native critical notifications
+	// - first-run configuration setup behavior
+	// - optional OS-conventional config/log path resolution
+	//
+	// The application currently uses portable defaults for config and logs
+	// (<exe>/config and <exe>/logs), while still routing setup and notifications
+	// through the active platform implementation.
+	// -----------------------------------------------------------------------------
+	pf := platform.Current()
+
+	// -----------------------------------------------------------------------------
+	// Resolve application root (directory of the running executable).
 	//
 	// Why:
-	// - This tool is meant to run unattended and from arbitrary working directories
-	//   (Windows Task Scheduler, terminal, etc.).
-	// - Default paths (config/, logs/) live next to the .exe to reduce surprises.
-	//
-	// Note:
-	// - ExeDir() can fail in some environments (permissions, odd launch contexts),
-	//   so we fall back to the current working directory.
+	// - The default config and log directories are intentionally located beside the
+	//   executable to support portable deployments and predictable Task Scheduler use.
+	// - If ExeDir() fails in an unusual launch context, fall back to the current
+	//   working directory rather than exiting before logging can be initialized.
 	// -----------------------------------------------------------------------------
 	root, err := utils.ExeDir()
 	if err != nil {
@@ -37,8 +51,27 @@ func main() {
 	// - config/ holds config.ini, logging.json, etc.
 	// - logs/ is where the logger writes log files (unless -no-logs is set)
 	// -----------------------------------------------------------------------------
-	defaultLogDir := filepath.Join(root, "logs")
+
+	// NOTICE: platform.DefaultConfigDir() and DefaultLogDir() use OS-specific logic to determine where config and logs should go. For example:
+	// - On Windows, config might go to %APPDATA%\file-maintenance\config.ini and logs to %LOCALAPPDATA%\file-maintenance\logs\
+	// - On Linux, config might go to ~/.config/file-maintenance/config.ini and logs to ~/.cache/file-maintenance/logs/
+	// - On macOS, config might go to ~/Library/Application Support/file-maintenance/config.ini and logs to ~/Library/Caches/file-maintenance/logs/
+	// If you want that behavior uncomment the lines below and remove the fallbacks that point to the app root. The platform defaults are more in line with user expectations and OS conventions, but the app root fallback can be useful for portable use cases (e.g., running from a USB drive).
+
+	// -----------------------------------------------------------------------------
+	//  Resolve platform-specific default config and log directories, with fallbacks to app root.
+	// defaultCfgDir, err := pf.DefaultConfigDir(appName)
+	// if err != nil {
+	// 	defaultCfgDir = filepath.Join(root, "config")
+	// }
+
+	// defaultLogDir, err := pf.DefaultLogDir(appName)
+	// if err != nil {
+	// 	defaultLogDir = filepath.Join(root, "logs")
+	// }
+
 	defaultCfgDir := filepath.Join(root, "config")
+	defaultLogDir := filepath.Join(root, "logs")
 
 	// -----------------------------------------------------------------------------
 	// CLI flags
@@ -126,6 +159,28 @@ func main() {
 	// defer log.Close()
 
 	// -----------------------------------------------------------------------------
+	// Ensure configuration exists before running maintenance.
+	//
+	// Windows behavior:
+	// - If <config-dir>/config.ini is missing, launch the embedded PowerShell setup
+	//   wizard and continue only if the wizard creates the file successfully.
+	//
+	// Linux/macOS behavior:
+	// - No GUI wizard is launched. The platform returns false if config.ini is
+	//   missing so the application exits safely without processing files.
+	// -----------------------------------------------------------------------------
+	configExists, err := pf.EnsureConfig(cfg.ConfigDir, root)
+	if err != nil {
+		log.Errorf("failed to ensure config: %v", err)
+		os.Exit(1)
+	}
+
+	if !configExists {
+		log.Info("Setup was cancelled or failed. Please run the tool again after configuring.")
+		os.Exit(1)
+	}
+
+	// -----------------------------------------------------------------------------
 	// Run the application.
 	//
 	// app.Run() is responsible for:
@@ -133,9 +188,10 @@ func main() {
 	// - pruning old logs (if logging enabled)
 	// - calling maintenance.Worker() to process eligible files
 	// -----------------------------------------------------------------------------
-	if err := app.Run(cfg, log); err != nil {
+	if err := app.Run(cfg, log, pf); err != nil {
 		// We already have a logger, so report the error there as well.
 		log.Errorf("internal exited with error: %v", err)
+		fmt.Fprintf(os.Stderr, "internal exited with error: %v\n", err)
 		os.Exit(1)
 	}
 }

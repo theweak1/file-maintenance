@@ -20,7 +20,9 @@ import (
 //   - ModTime is more predictable across platforms.
 //
 // - The strict comparison matters:
+//
 //   - If a file is exactly at the cutoff timestamp, this returns false.
+//
 //   - Tests should avoid asserting the equality boundary because time.Now() is dynamic.
 //
 //   - days == 0 means "older than now" which will match almost all existing files,
