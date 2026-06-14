@@ -200,3 +200,21 @@ func countFilesWithPrefixSuffix(t *testing.T, root, prefix, suffix string) int {
 	})
 	return n
 }
+
+type fakeDiskSpaceChecker struct {
+	availableBytes uint64
+	err            error
+}
+
+func (f fakeDiskSpaceChecker) AvailableBytes(path string) (uint64, error) {
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.availableBytes, nil
+}
+
+func newTestDisk() fakeDiskSpaceChecker {
+	return fakeDiskSpaceChecker{
+		availableBytes: 1 << 40, // 1 TB; enough for normal tests
+	}
+}

@@ -9,11 +9,12 @@ import (
 	"file-maintenance/internal/types"
 )
 
-type criticalNotifier interface {
+type runtimePlatform interface {
 	ShowCritical(title, message string)
+	AvailableBytes(path string) (uint64, error)
 }
 
-func Run(cfg types.AppConfig, log *logging.Logger, notifier criticalNotifier) error {
+func Run(cfg types.AppConfig, log *logging.Logger, platform runtimePlatform) error {
 	// -----------------------------------------------------------------------------
 	// Read all configuration from config.ini (single file).
 	//
@@ -98,7 +99,7 @@ func Run(cfg types.AppConfig, log *logging.Logger, notifier criticalNotifier) er
 		if !maintenance.CheckBackupPath(backupLocation) {
 			errMsg := fmt.Sprintf("Backup path is not accessible: %s\n\nPlease check path and permissions.", backupLocation)
 			// Show a platform-specific critical notification for the user.
-			notifier.ShowCritical("Backup Location Error", errMsg)
+			platform.ShowCritical("Backup Location Error", errMsg)
 
 			return fmt.Errorf("backup path not accessible: %s", backupLocation)
 		}
@@ -119,7 +120,7 @@ func Run(cfg types.AppConfig, log *logging.Logger, notifier criticalNotifier) er
 	// - We must return Worker errors; otherwise failures are invisible to callers
 	//   and Task Scheduler exit codes.
 	// -----------------------------------------------------------------------------
-	if err := maintenance.Worker(pathconfig, backupLocation, cfg, log); err != nil {
+	if err := maintenance.Worker(pathconfig, backupLocation, cfg, log, platform); err != nil {
 		return err
 	}
 

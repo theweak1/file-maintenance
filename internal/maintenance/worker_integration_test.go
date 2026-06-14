@@ -48,7 +48,7 @@ func TestWorker_Integration_Table(t *testing.T) {
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathconfig, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -101,7 +101,7 @@ func TestWorker_Integration_MultiFiles_Table(t *testing.T) {
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathconfig, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -152,7 +152,7 @@ func TestWorker_Integration_NestedFolders_Table(t *testing.T) {
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathconfig, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -208,7 +208,7 @@ func TestWorker_Integration_MultipleFolders(t *testing.T) {
 				{Path: src2, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathconfig, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -256,7 +256,7 @@ func TestWorker_Integration_MaxFiles_Table(t *testing.T) {
 				{Path: src, Backup: tt.backupEnabled, IsDir: true},
 			}
 
-			if err := Worker(pathconfig, backup, cfg, log); err != nil {
+			if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 				t.Fatalf("worker error: %v", err)
 			}
 
@@ -299,7 +299,7 @@ func TestWorker_Integration_MaxRuntime_StopsEarly(t *testing.T) {
 		{Path: src, Backup: false, IsDir: true},
 	}
 
-	if err := Worker(pathconfig, backup, cfg, log); err != nil {
+	if err := Worker(pathconfig, backup, cfg, log, newTestDisk()); err != nil {
 		t.Fatalf("worker error: %v", err)
 	}
 
@@ -310,5 +310,71 @@ func TestWorker_Integration_MaxRuntime_StopsEarly(t *testing.T) {
 	}
 	if remaining == total {
 		t.Fatalf("expected at least 1 file processed, but none were processed")
+	}
+}
+
+func TestWorker_Integration_InsufficientBackupSpace(t *testing.T) {
+	root, src, backup := newSandbox(t)
+	cfg, log := newTestCfgAndLogger(t, root)
+
+	cfg.Days = 5
+	cfg.Walkers = 1
+	cfg.QueueSize = 10
+	cfg.Retries = 0
+
+	target := filepath.Join(src, "large.txt")
+	mustWriteFile(t, target, "this file is larger than the fake available backup space")
+	mustSetAgeDays(t, target, 10)
+
+	pathconfig := []types.PathConfig{
+		{Path: src, Backup: true, IsDir: true},
+	}
+
+	disk := fakeDiskSpaceChecker{
+		availableBytes: 1, // intentionally too small
+	}
+
+	err := Worker(pathconfig, backup, cfg, log, disk)
+	if err == nil {
+		t.Fatalf("expected worker error due to insufficient backup space, got nil")
+	}
+
+	// Safety guarantee: source file must still exist because backup could not be made.
+	assertExists(t, target)
+
+	if countBackupsWithBase(t, backup, "large.txt") > 0 {
+		t.Fatalf("expected no backup to be written when disk space is insufficient")
+	}
+}
+
+func TestWorker_Integration_NoBackup_DoesNotRequireBackupSpace(t *testing.T) {
+	root, src, backup := newSandbox(t)
+	cfg, log := newTestCfgAndLogger(t, root)
+
+	cfg.Days = 5
+	cfg.Walkers = 1
+	cfg.QueueSize = 10
+	cfg.Retries = 0
+
+	target := filepath.Join(src, "delete-only.txt")
+	mustWriteFile(t, target, "delete without backup")
+	mustSetAgeDays(t, target, 10)
+
+	pathconfig := []types.PathConfig{
+		{Path: src, Backup: false, IsDir: true},
+	}
+
+	disk := fakeDiskSpaceChecker{
+		availableBytes: 0, // should not matter because backup is disabled
+	}
+
+	if err := Worker(pathconfig, backup, cfg, log, disk); err != nil {
+		t.Fatalf("worker error: %v", err)
+	}
+
+	assertNotExists(t, target)
+
+	if countBackupsWithBase(t, backup, "delete-only.txt") > 0 {
+		t.Fatalf("expected no backup in delete-only mode")
 	}
 }

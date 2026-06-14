@@ -10,7 +10,7 @@ type DiskUsage struct {
 	Available uint64
 }
 
-func DiskUsageForPath(path string) (DiskUsage, error) {
+func (Platform) AvailableBytes(path string) (uint64, error) {
 	var freeBytesAvailable, totalNumberOfBytes, totalNumberOfFreeBytes uint64
 
 	err := windows.GetDiskFreeSpaceEx(
@@ -20,12 +20,8 @@ func DiskUsageForPath(path string) (DiskUsage, error) {
 		&totalNumberOfFreeBytes,
 	)
 	if err != nil {
-		return DiskUsage{}, err
+		return 0, err
 	}
 
-	return DiskUsage{
-		Total:     totalNumberOfBytes,
-		Free:      totalNumberOfFreeBytes,
-		Available: freeBytesAvailable,
-	}, nil
+	return freeBytesAvailable, nil
 }

@@ -37,7 +37,25 @@ type FileJob struct {
 
 	// backup indicates whether this file should be backed up before deletion.
 	// This is set based on the path's configuration in config.ini.
-	backup bool
+	backup    bool
+	sizeBytes uint64
+}
+
+type diskSpaceChecker interface {
+	AvailableBytes(path string) (uint64, error)
+}
+
+func atomicSubUint64(addr *uint64, delta uint64) {
+	if delta == 0 {
+		return
+	}
+	atomic.AddUint64(addr, ^(delta - 1))
+}
+
+func storeFirstErr(firstErr *atomic.Value, err error) {
+	if firstErr.Load() == nil {
+		firstErr.Store(err)
+	}
 }
 
 // Worker scans configured folders, selects "old" files (based on cfg.Days),
@@ -65,7 +83,7 @@ type FileJob struct {
 //     (regardless of whether delete succeeded). It exists for stop conditions/reporting.
 //   - deletedByFolder is PER-FOLDER and increments ONLY when a delete succeeds.
 //   - Per-folder counts are logged AFTER all processing finishes so totals are accurate.
-func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfig, log *logging.Logger) error {
+func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfig, log *logging.Logger, disk diskSpaceChecker) error {
 	log.Info("Starting maintenance worker")
 
 	// -------------------------------------------------------------------------
@@ -120,6 +138,7 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 	// processed counts how many jobs the processor handled (global).
 	// Used only for stop conditions and end-of-run reporting.
 	var processed uint64
+	var pendingBackupBytes uint64
 
 	// firstErr stores the first "hard" error encountered during folder walking.
 	//
@@ -149,6 +168,75 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 		return false
 	}
 
+	ensureBackupSpace := func(requiredBytes uint64, reason string) bool {
+		if requiredBytes == 0 {
+			return true
+		}
+
+		availableBytes, err := disk.AvailableBytes(backupRoot)
+		if err != nil {
+			err := fmt.Errorf("unable to check available backup space for %s: %w", backupRoot, err)
+			log.Errorf("%v", err)
+			storeFirstErr(&firstErr, err)
+			cancel()
+			return false
+		}
+
+		if availableBytes < requiredBytes {
+			err := fmt.Errorf(
+				"insufficient backup space for %s: required=%d bytes available=%d bytes backupRoot=%s",
+				reason,
+				requiredBytes,
+				availableBytes,
+				backupRoot,
+			)
+			log.Errorf("%v", err)
+			storeFirstErr(&firstErr, err)
+			cancel()
+			return false
+		}
+
+		log.Debugf(
+			"Backup space check OK for %s: required=%d bytes available=%d bytes",
+			reason,
+			requiredBytes,
+			availableBytes,
+		)
+
+		return true
+	}
+
+	enqueueJob := func(job FileJob) error {
+		if job.backup {
+			atomic.AddUint64(&pendingBackupBytes, job.sizeBytes)
+		}
+
+		select {
+		case <-ctx.Done():
+			if job.backup {
+				atomicSubUint64(&pendingBackupBytes, job.sizeBytes)
+			}
+			return context.Canceled
+
+		case jobs <- job:
+		}
+
+		if job.backup {
+			queuedBytes := atomic.LoadUint64(&pendingBackupBytes)
+
+			// Queue-level check.
+			//
+			// This checks the total size of backup-enabled files currently queued.
+			// It is intentionally conservative: if the queued backup size exceeds
+			// available destination space, cancel the run before more work is done.
+			if queuedBytes > 0 && !ensureBackupSpace(queuedBytes, "queued backup files") {
+				return context.Canceled
+			}
+		}
+
+		return nil
+	}
+
 	// -------------------------------------------------------------------------
 	// Processor goroutine (single-threaded file operations)
 	//
@@ -166,6 +254,14 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 		defer procWG.Done()
 
 		for job := range jobs {
+			if ctx.Err() != nil {
+				return
+			}
+
+			if job.backup {
+				atomicSubUint64(&pendingBackupBytes, job.sizeBytes)
+			}
+
 			// Stop quickly if we hit run limits.
 			if shouldStop() {
 				log.Info("Stop condition met, halting processing")
@@ -190,6 +286,10 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 				if DoesFileExist(dstPath) {
 					log.Warnf("File already exists in backup, skipping: %s", dstPath)
 				} else {
+					if !ensureBackupSpace(job.sizeBytes, fmt.Sprintf("file %s", job.srcPath)) {
+						return
+					}
+
 					if err := copyFileWithRetry(ctx, job.srcPath, dstPath, cfg.Retries, log); err != nil {
 						log.Errorf("Backup failed for %s -> %s: %v", job.srcPath, dstPath, err)
 						continue // do NOT delete if backup failed
@@ -291,10 +391,15 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 				folderRoot := filepath.Dir(folder)
 
 				// Enqueue the file directly for processing.
-				select {
-				case <-ctx.Done():
+				job := FileJob{
+					srcPath:    folder,
+					folderRoot: folderRoot,
+					backup:     backupEnabled,
+					sizeBytes:  uint64(fi.Size()),
+				}
+
+				if err := enqueueJob(job); err != nil {
 					return
-				case jobs <- FileJob{srcPath: folder, folderRoot: folderRoot, backup: backupEnabled}:
 				}
 				log.Infof("Queued file for deletion: %s", folder)
 				return
@@ -342,10 +447,15 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 				}
 
 				// Enqueue work for the processor (blocks if queue is full).
-				select {
-				case <-ctx.Done():
-					return context.Canceled
-				case jobs <- FileJob{srcPath: path, folderRoot: folder, backup: backupEnabled}:
+				job := FileJob{
+					srcPath:    path,
+					folderRoot: folder,
+					backup:     backupEnabled,
+					sizeBytes:  uint64(info.Size()),
+				}
+
+				if err := enqueueJob(job); err != nil {
+					return err
 				}
 
 				return nil

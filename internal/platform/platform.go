@@ -14,6 +14,7 @@ package platform
 // - DefaultConfigDir returns an OS-conventional config directory.
 // - DefaultLogDir returns an OS-conventional log/cache directory.
 // - EnsureConfig verifies config.ini exists before maintenance begins.
+// - AvailableBytes returns writable bytes available at a destination path.
 //
 // Note: main currently chooses portable defaults (<exe>/config and <exe>/logs)
 // instead of DefaultConfigDir and DefaultLogDir, but these methods remain part of
@@ -23,4 +24,6 @@ type Platform interface {
 	DefaultConfigDir(appName string) (string, error)
 	DefaultLogDir(appName string) (string, error)
 	EnsureConfig(configDir string, exeDir string) (bool, error)
+
+	AvailableBytes(path string) (uint64, error)
 }

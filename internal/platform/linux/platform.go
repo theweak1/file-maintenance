@@ -2,6 +2,7 @@
 package linux
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -28,4 +29,8 @@ func (Platform) EnsureConfig(configDir string, exeDir string) (bool, error) {
 		return false, nil
 	}
 	return false, err
+}
+
+func (Platform) AvailableBytes(path string) (uint64, error) {
+	return 0, fmt.Errorf("disk space check not implemented for this platform")
 }

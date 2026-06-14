@@ -241,6 +241,19 @@ The backup path builder validates that files stay within the configured source r
 
 ---
 
+## Backup Space Validation
+
+When backup is enabled for a path, the worker tracks the size of backup-enabled jobs and checks available space on the backup destination.
+
+The worker performs two checks:
+
+1. Queue-level check: validates the total size of pending backup jobs.
+2. Per-file check: validates available destination space immediately before copying a file.
+
+If available backup space is insufficient, the worker cancels the run and does not delete the source file.
+
+---
+
 ## Logging
 
 Default file logs:
