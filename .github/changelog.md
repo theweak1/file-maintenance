@@ -1,6 +1,6 @@
 # Changelog
 
-Unreleased - 2026-06-20
+released - 2026-06-20
 
 - Fix typo in build workflow name (9b41db1)
 - ci: checkout repository before creating release (c0d66d6)
