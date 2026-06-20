@@ -48,6 +48,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Go
         uses: actions/setup-go@v6
@@ -154,6 +156,26 @@ jobs:
           printf "Release assets:\n"
           printf '%s\n' "${ASSETS[@]}"
 
+          # Default notes
+          NOTES="Automated release for ${GITHUB_REF_NAME}"
+
+          # If changelog exists, prefer it when it was updated in this commit
+          if [ -f .github/changelog.md ]; then
+            PARENT=$(git rev-parse "${GITHUB_SHA}^" 2>/dev/null || true)
+            if [ -n "$PARENT" ]; then
+              if git diff --name-only "$PARENT" "$GITHUB_SHA" | grep -q "^.github/changelog.md$"; then
+                NOTES="$(cat .github/changelog.md)"
+              else
+                echo ".github/changelog.md unchanged in this commit; using default notes"
+              fi
+            else
+              # No parent commit (possible for root/tagged initial commit) — use the file
+              NOTES="$(cat .github/changelog.md)"
+            fi
+          else
+            echo ".github/changelog.md not found; using default notes"
+          fi
+
           gh release create "${GITHUB_REF_NAME}" "${ASSETS[@]}" \
             --title "file-maintenance ${GITHUB_REF_NAME}" \
-            --notes "Automated release for ${GITHUB_REF_NAME}"
+            --notes "$NOTES"
