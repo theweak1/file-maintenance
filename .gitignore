@@ -8,6 +8,7 @@
 *.dylib
 *.test
 *.out
+dist/
 .bin/
 *.zip
 *.bak
@@ -68,3 +69,4 @@ test/
 # Generated archives
 *.zip
 *.bak
+*.tar.gz

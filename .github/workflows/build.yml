@@ -1,0 +1,131 @@
+name: Buils Binary
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-and-build:
+    name: Test and build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ${{matrix.runner}}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            ext: .exe
+            archive: zip
+
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            ext: ""
+            archive: tar.gz
+
+          - goos: darwin
+            goarch: amd64
+            runner: macos-latest
+            ext: ""
+            archive: tar.gz
+
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            ext: ""
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Resolve version metadata
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+
+          BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          SHORT_SHA="${GITHUB_SHA::7}"
+
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.vars.outputs.version }}
+          COMMIT: ${{ github.sha }}
+          BUILD_DATE: ${{ steps.vars.outputs.build_date }}
+        run: |
+          mkdir -p dist
+
+          NAME="file-maintenance_${VERSION}_${GOOS}_${GOARCH}"
+          OUT="dist/${NAME}${{ matrix.ext }}"
+
+          go build -trimpath \
+            -ldflags="-s -w -X 'file-maintenance/internal/version.Version=${VERSION}' -X 'file-maintenance/internal/version.Commit=${COMMIT}' -X 'file-maintenance/internal/version.BuildDate=${BUILD_DATE}'" \
+            -o "${OUT}" \
+            ./cmd/main
+
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            (cd dist && zip "${NAME}.zip" "${NAME}${{ matrix.ext }}")
+          else
+            tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}${{ matrix.ext }}"
+          fi
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: file-maintenance-${{ steps.vars.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    if: always() && startsWith(github.ref, 'refs/tags/v')
+    needs: test-and-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: release-assets
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release-assets/**/* \
+            --title "file-maintenance ${GITHUB_REF_NAME}" \
+            --notes "Automated release for ${GITHUB_REF_NAME}"
