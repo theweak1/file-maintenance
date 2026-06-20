@@ -95,11 +95,19 @@ jobs:
             -o "${OUT}" \
             ./cmd/main
 
-          if [[ "${{ matrix.archive }}" == "zip" ]]; then
-            (cd dist && zip "${NAME}.zip" "${NAME}${{ matrix.ext }}")
-          else
-            tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}${{ matrix.ext }}"
-          fi
+      - name: Archive Windows artifact
+        if: matrix.goos == 'windows'
+        shell: pwsh
+        run: |
+          $name = "file-maintenance_${{ steps.vars.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          Compress-Archive -Path "dist/$name.exe" -DestinationPath "dist/$name.zip" -Force
+
+      - name: Archive Unix artifact
+        if: matrix.goos != 'windows'
+        shell: bash
+        run: |
+          NAME="file-maintenance_${{ steps.vars.outputs.version }}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          tar -czf "dist/${NAME}.tar.gz" -C dist "${NAME}"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
