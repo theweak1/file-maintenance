@@ -130,10 +130,27 @@ jobs:
         with:
           path: release-assets
 
+      - name: Show downloaded artifacts
+        shell: bash
+        run: |
+          echo "Downloaded artifact tree:"
+          find release-assets -type f -print || true
+
       - name: Create release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" release-assets/**/* \
+          mapfile -t ASSETS < <(find release-assets -type f \( -name "*.zip" -o -name "*.tar.gz" \))
+
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "No release assets were found. Skipping release creation."
+            exit 0
+          fi
+
+          printf "Release assets:\n"
+          printf '%s\n' "${ASSETS[@]}"
+
+          gh release create "${GITHUB_REF_NAME}" "${ASSETS[@]}" \
             --title "file-maintenance ${GITHUB_REF_NAME}" \
             --notes "Automated release for ${GITHUB_REF_NAME}"
