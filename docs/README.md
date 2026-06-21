@@ -1,16 +1,31 @@
 # File Maintenance Tool
 
-A safe, scheduled file maintenance utility designed for Windows-first unattended cleanup while keeping the core logic isolated behind OS-specific platform abstractions.
+A Windows-first, unattended file maintenance utility for scheduled cleanup jobs. The core cleanup logic is isolated from OS-specific setup, notification, path, and disk-space behavior through the `internal/platform` abstraction.
 
 The tool can:
 
-- Scan configured file/folder paths.
+- Scan configured file and folder paths.
 - Identify files older than the configured retention period.
 - Back up eligible files before deletion when backup is enabled for that path.
-- Delete files after a successful backup, or delete directly when backup is intentionally disabled for that path.
-- Clean up empty directories without crossing the configured path root.
-- Write operational logs with retention cleanup.
+- Delete eligible files directly when backup is intentionally disabled for that path.
+- Write operational, error, and count logs with retention cleanup.
 - Launch a Windows setup wizard on first run when `config.ini` is missing.
+- Print build metadata with the `-version` flag.
+
+---
+
+## Current Status
+
+This project is currently optimized for Windows scheduled execution.
+
+| Area                                | Current status                                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Windows setup wizard                | Implemented with embedded PowerShell and Windows Forms.                                                 |
+| Windows notifications               | Implemented through PowerShell / Windows Forms message boxes.                                           |
+| Windows backup space validation     | Implemented through `GetDiskFreeSpaceEx`.                                                               |
+| Linux/macOS config check            | Implemented as a safe `config.ini` existence check.                                                     |
+| Linux/macOS backup space validation | Not implemented yet. Backup-enabled runs on those platforms will fail once space validation is reached. |
+| GitHub Actions build matrix         | Windows amd64, Linux amd64, macOS amd64, and macOS arm64.                                               |
 
 ---
 
@@ -47,7 +62,7 @@ On Windows, startup checks whether this file exists:
 <config-dir>/config.ini
 ```
 
-If it is missing, the Windows platform implementation launches the embedded PowerShell setup wizard. The wizard creates `config.ini` and the application continues only if the file was created successfully.
+If it is missing, the Windows platform implementation launches the embedded PowerShell setup wizard. The wizard creates `config.ini`, and the application continues only if the file was created successfully.
 
 On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` is missing, the platform implementation returns `false` and the application exits safely without processing files.
 
@@ -85,7 +100,6 @@ On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` i
    - Track per-path delete counts.
 
 6. **Cleanup and Exit**
-   - Remove empty directories safely.
    - Prune old logs according to log retention.
    - Exit with an error code when fatal configuration or worker errors occur.
 
@@ -113,11 +127,12 @@ The execution flow uses concurrent path discovery but serialized file operations
 
 ### Retention and Logging
 
-| Flag             | Default | Description                                        |
-| ---------------- | ------: | -------------------------------------------------- |
-| `-days`          |     `7` | Only files older than this many days are eligible. |
-| `-log-retention` |    `30` | Number of days to keep log files.                  |
-| `-no-logs`       | `false` | Disable file logging and write to stdout/stderr.   |
+| Flag             | Default | Description                                                                                                      |
+| ---------------- | ------: | ---------------------------------------------------------------------------------------------------------------- |
+| `-days`          |     `7` | Only files older than this many days are eligible. `0` effectively selects files older than the current instant. |
+| `-log-retention` |    `30` | Number of days to keep log files.                                                                                |
+| `-no-logs`       | `false` | Disable file logging and write to stdout/stderr.                                                                 |
+| `-version`       | `false` | Print version metadata and exit.                                                                                 |
 
 ### Paths
 
@@ -128,14 +143,16 @@ The execution flow uses concurrent path discovery but serialized file operations
 
 ### Resource Controls
 
-| Flag           | Default | Description                                                    |
-| -------------- | ------: | -------------------------------------------------------------- |
-| `-walkers`     |     `1` | Number of concurrent path walkers.                             |
-| `-queue-size`  |   `300` | Buffered job queue size.                                       |
-| `-max-files`   |     `0` | Maximum jobs to handle in one run. `0` means unlimited.        |
-| `-max-runtime` |   `30m` | Maximum run duration. `0` means unlimited.                     |
-| `-cooldown`    |     `0` | Delay after each processed job. Useful for SMB/network pacing. |
-| `-retries`     |     `2` | Number of backup copy retries.                                 |
+| Flag           | Default | Description                                                                                                               |
+| -------------- | ------: | ------------------------------------------------------------------------------------------------------------------------- |
+| `-walkers`     |     `1` | Number of concurrent path walkers.                                                                                        |
+| `-queue-size`  |   `300` | Buffered job queue size.                                                                                                  |
+| `-max-files`   |     `0` | Maximum jobs to handle in one run. `0` means unlimited.                                                                   |
+| `-max-runtime` |   `30m` | Maximum run duration. `0` means unlimited. CLI values use Go duration strings such as `55m`, `1h`, or `30s`.              |
+| `-cooldown`    |     `0` | Delay after each processed job. Useful for SMB/network pacing. CLI values use Go duration strings such as `50ms` or `1s`. |
+| `-retries`     |     `2` | Number of backup copy retries.                                                                                            |
+
+Important: after CLI flags are parsed, non-zero values from `config.ini` override CLI/default values. Confirm `[settings]` and `[advanced]` before relying on Task Scheduler arguments.
 
 ---
 
@@ -167,8 +184,18 @@ queue-size=300
 retries=2
 cooldown=50
 max-files=0
-max-runtime=30
+max-runtime=3300000
 ```
+
+Current implementation note: `[advanced]` duration values are parsed as milliseconds in `config.ini`. For example:
+
+| Setting               | Meaning                                        |
+| --------------------- | ---------------------------------------------- |
+| `cooldown=50`         | 50 milliseconds.                               |
+| `max-runtime=3300000` | 55 minutes.                                    |
+| `max-runtime=0`       | Do not override the CLI/default runtime limit. |
+
+CLI flags use duration strings like `-max-runtime 55m` and `-cooldown 50ms`; `config.ini` currently uses numeric milliseconds.
 
 ### `[backup]`
 
@@ -205,13 +232,13 @@ Optional logging configuration:
 
 ```json
 {
-  "DEBUG": false,
-  "COUNT": true,
-  "INFO": true,
-  "WARN": true,
-  "ERROR": true,
-  "SUCCESS": true,
-  "FATAL": true
+	"DEBUG": false,
+	"COUNT": true,
+	"INFO": true,
+	"WARN": true,
+	"ERROR": true,
+	"SUCCESS": true,
+	"FATAL": true
 }
 ```
 
@@ -237,7 +264,7 @@ Backup:
 D:\backups\30Jan26\Images\2024\Camera\IMG001.jpg
 ```
 
-The backup path builder validates that files stay within the configured source root and prevents directory traversal into unintended destinations.
+The active backup path builder preserves the source folder structure under the dated backup folder. The worker supplies files discovered from the configured source root, and the copy layer creates the destination folders as needed.
 
 ---
 
@@ -251,6 +278,8 @@ The worker performs two checks:
 2. Per-file check: validates available destination space immediately before copying a file.
 
 If available backup space is insufficient, the worker cancels the run and does not delete the source file.
+
+Current platform limitation: this validation is implemented for Windows. Linux and macOS currently return a `disk space check not implemented for this platform` error when backup-enabled work reaches this validation.
 
 ---
 
@@ -291,25 +320,80 @@ Current responsibilities:
 - `DefaultConfigDir(appName string) (string, error)`
 - `DefaultLogDir(appName string) (string, error)`
 - `EnsureConfig(configDir string, exeDir string) (bool, error)`
+- `AvailableBytes(path string) (uint64, error)`
 
-Windows provides the setup wizard implementation. Linux and macOS currently perform a safe config existence check only.
+Windows provides the setup wizard and disk-space implementation. Linux and macOS currently perform a safe config existence check only and do not implement backup destination free-space checks yet.
 
 ---
 
-## Windows Task Scheduler Example
+## Windows Task Scheduler Setup
+
+Recommended Task Scheduler action fields for the current Windows deployment:
+
+| Task Scheduler field | Value                                                                                                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Program/script       | `powershell.exe`                                                                                                                                                           |
+| Add arguments        | `-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& 'C:\FileCopy\fileMaintenance\fileMaintenance.exe' -days 0 -walkers 1 -max-runtime 55m -cooldown 50ms"` |
+| Start in             | `C:\FileCopy\FileMaintenance`                                                                                                                                              |
+
+Equivalent PowerShell command, split for readability:
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ^
-Start-Process -FilePath "C:\path\fileMaintenance.exe" `
--ArgumentList "-days 7 -walkers 1 -max-runtime 30m -cooldown 50ms" `
--Priority BelowNormal -WindowStyle Hidden -Wait
+$exe = "C:\FileCopy\fileMaintenance\fileMaintenance.exe"
+$args = "-days 0 -walkers 1 -max-runtime 55m -cooldown 50ms"
+
+powershell.exe -NoProfile `
+  -ExecutionPolicy Bypass `
+  -WindowStyle Hidden `
+  -Command "& '$exe' $args"
 ```
 
 Recommended task options:
 
-- Run whether user is logged on or not.
+- Run whether user is logged on or not, if the configured paths and backup destination are available to that account.
 - Run as soon as possible after a missed start.
-- Stop task if running longer than expected.
+- Stop the task if it runs longer than expected.
+- Review `config.ini` because non-zero values in `[settings]` and `[advanced]` override these CLI arguments.
+
+For the current scheduled command:
+
+- `-days 0` makes almost all files older than the current instant eligible.
+- `-walkers 1` keeps folder discovery serialized.
+- `-max-runtime 55m` caps the run at 55 minutes unless overridden by `config.ini`.
+- `-cooldown 50ms` adds a short pause after each processed job unless overridden by `config.ini`.
+
+---
+
+## GitHub Actions Release Build
+
+The GitHub Actions workflow is located at:
+
+```text
+.github/workflows/build.yml
+```
+
+It currently:
+
+- Runs on pull requests to `main`.
+- Runs on pushed tags matching `v*`.
+- Supports manual `workflow_dispatch` runs.
+- Runs `go test ./...` before building each OS/architecture target.
+- Builds platform-specific archives:
+  - Windows amd64: `.zip`
+  - Linux amd64: `.tar.gz`
+  - macOS amd64: `.tar.gz`
+  - macOS arm64: `.tar.gz`
+- Injects version metadata through linker flags:
+  - `Version`
+  - `Commit`
+  - `BuildDate`
+- Creates a GitHub release for tag pushes when release assets are available.
+
+Check build metadata locally or from a release binary with:
+
+```powershell
+.\fileMaintenance.exe -version
+```
 
 ---
 
@@ -318,7 +402,6 @@ Recommended task options:
 - No deletion occurs if backup is enabled and the backup root is inaccessible.
 - No deletion occurs if backup copy fails.
 - File operations are serialized to reduce network and disk contention.
-- Directory cleanup does not cross the configured path root.
 - Resource controls prevent unbounded walking or job queue growth.
 - Critical backup-location failures trigger platform-specific user notification.
 
@@ -326,16 +409,12 @@ Recommended task options:
 
 ## Development and Testing
 
+The project currently targets the Go version declared in `go.mod`.
+
 Run tests:
 
 ```powershell
 go test ./...
-```
-
-Smoke test:
-
-```powershell
-.\build.ps1 smoke
 ```
 
 Build:
@@ -344,7 +423,13 @@ Build:
 .\build.ps1 build
 ```
 
-Note: tests involving Windows drive-letter behavior should be run on Windows or guarded with Windows-specific build tags.
+Run locally:
+
+```powershell
+.\build.ps1 run -Days 0
+```
+
+Note: the current `build.ps1 smoke` target still checks for legacy `config/folders.txt` and `config/backup.txt` files. The application runtime now uses `config/config.ini`, so update the smoke task before relying on it as the primary local validation path.
 
 ---
 
