@@ -378,3 +378,94 @@ func TestWorker_Integration_NoBackup_DoesNotRequireBackupSpace(t *testing.T) {
 		t.Fatalf("expected no backup in delete-only mode")
 	}
 }
+
+func TestWorker_Integration_BackupSpaceCheckedOncePerBatch(t *testing.T) {
+	root, src, backup := newSandbox(t)
+	cfg, log := newTestCfgAndLogger(t, root)
+
+	cfg.Days = 5
+	cfg.Walkers = 1
+	cfg.QueueSize = 2
+	cfg.Retries = 0
+
+	totalOldFiles := 5
+	for i := 0; i < totalOldFiles; i++ {
+		p := filepath.Join(src, "batch"+strconv.Itoa(i)+".txt")
+		mustWriteFile(t, p, "x")
+		mustSetAgeDays(t, p, 10)
+	}
+
+	pathconfig := []types.PathConfig{
+		{Path: src, Backup: true, IsDir: true},
+	}
+
+	disk := &countingDiskSpaceChecker{
+		availableBytes: 1 << 40,
+	}
+
+	if err := Worker(pathconfig, backup, cfg, log, disk); err != nil {
+		t.Fatalf("worker error: %v", err)
+	}
+
+	// DEBUG: log the number of disk space checks to help diagnose test failures.
+	t.Logf("disk space checks: %d", disk.calls)
+
+	// Five files with QueueSize=2 should be processed as three batches:
+	// [2 files], [2 files], [1 file]. The backup space check should happen once
+	// per batch, not once per file.
+	if disk.calls != 3 {
+		t.Fatalf("expected 3 backup-space checks, got %d", disk.calls)
+	}
+
+	if got := countFilesWithPrefixSuffix(t, backup, "batch", ".txt"); got != totalOldFiles {
+		t.Fatalf("expected %d backups, got %d", totalOldFiles, got)
+	}
+
+	if remaining := countNonDirFiles(t, src); remaining != 0 {
+		t.Fatalf("expected all source files deleted, got %d remaining", remaining)
+	}
+}
+
+func TestWorker_Integration_InsufficientBackupSpaceForBatchKeepsSources(t *testing.T) {
+	root, src, backup := newSandbox(t)
+	cfg, log := newTestCfgAndLogger(t, root)
+
+	cfg.Days = 5
+	cfg.Walkers = 1
+	cfg.QueueSize = 2
+	cfg.Retries = 0
+
+	fileA := filepath.Join(src, "a.txt")
+	fileB := filepath.Join(src, "b.txt")
+	mustWriteFile(t, fileA, "1234")
+	mustWriteFile(t, fileB, "5678")
+	mustSetAgeDays(t, fileA, 10)
+	mustSetAgeDays(t, fileB, 10)
+
+	pathconfig := []types.PathConfig{
+		{Path: src, Backup: true, IsDir: true},
+	}
+
+	disk := &countingDiskSpaceChecker{
+		availableBytes: 7, // queued batch needs 8 bytes total
+	}
+
+	err := Worker(pathconfig, backup, cfg, log, disk)
+	if err == nil {
+		t.Fatalf("expected worker error due to insufficient batch backup space, got nil")
+	}
+
+	// DEBUG: log the number of disk space checks to help diagnose test failures.
+	t.Logf("disk space checks: %d", disk.calls)
+
+	if disk.calls != 1 {
+		t.Fatalf("expected 1 backup-space check for the failed batch, got %d", disk.calls)
+	}
+
+	assertExists(t, fileA)
+	assertExists(t, fileB)
+
+	if got := countFilesWithPrefixSuffix(t, backup, "", ".txt"); got != 0 {
+		t.Fatalf("expected no backups to be written, got %d", got)
+	}
+}

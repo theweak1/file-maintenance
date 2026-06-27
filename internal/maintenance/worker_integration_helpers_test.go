@@ -218,3 +218,17 @@ func newTestDisk() fakeDiskSpaceChecker {
 		availableBytes: 1 << 40, // 1 TB; enough for normal tests
 	}
 }
+
+type countingDiskSpaceChecker struct {
+	availableBytes uint64
+	err            error
+	calls          uint64
+}
+
+func (f *countingDiskSpaceChecker) AvailableBytes(path string) (uint64, error) {
+	f.calls++
+	if f.err != nil {
+		return 0, f.err
+	}
+	return f.availableBytes, nil
+}

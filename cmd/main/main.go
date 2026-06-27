@@ -101,20 +101,26 @@ func main() {
 		noLogs = flag.Bool("no-logs", false, "If set, logging is disabled and output is sent to stdout")
 
 		// Resource controls used by maintenance.Worker
-		walkers     = flag.Int("walkers", 1, "Number of concurrent folder walkers")
-		queueSize   = flag.Int("queue-size", 300, "Size of the buffered jobs channel")
-		maxFiles    = flag.Int("max-files", 0, "Maximum number of files to process (0 = unlimited)")
-		maxRuntime  = flag.Duration("max-runtime", 30*time.Minute, "Maximum runtime duration (0 = unlimited)")
-		cooldown    = flag.Duration("cooldown", 0, "Cooldown duration after each file operation")
-		retries     = flag.Int("retries", 2, "Number of copy retries on failure")
-		showVersion = flag.Bool("version", false, "Print version and exit")
+		walkers      = flag.Int("walkers", 1, "Number of concurrent folder walkers")
+		queueSize    = flag.Int("queue-size", 300, "Size of the buffered jobs channel")
+		maxFiles     = flag.Int("max-files", 0, "Maximum number of files to process (0 = unlimited)")
+		maxRuntime   = flag.Duration("max-runtime", 30*time.Minute, "Maximum runtime duration (0 = unlimited)")
+		cooldown     = flag.Duration("cooldown", 0, "Cooldown duration after each file operation")
+		retries      = flag.Int("retries", 2, "Number of copy retries on failure")
+		shortVersion = flag.Bool("version", false, "Print version and exit")
+		longVersion  = flag.Bool("long-version", false, "Print long version and exit")
 	)
 
 	// Parse CLI flags once at process startup.
 	flag.Parse()
 
-	if *showVersion {
-		fmt.Printf("file-maintenance %s\n", version.String())
+	if *shortVersion {
+		fmt.Printf("file-maintenance %s\n", version.ShortVersion())
+		return
+	}
+
+	if *longVersion {
+		fmt.Printf("file-maintenance %s\n", version.LongVersion())
 		return
 	}
 	// -----------------------------------------------------------------------------
@@ -161,7 +167,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Infof("file-maintenance version: %s", version.String())
+	log.Infof("file-maintenance version: %s", version.ShortVersion())
 	// If you later add Close() (flush buffers / close handles), you can defer it here:
 	// defer log.Close()
 

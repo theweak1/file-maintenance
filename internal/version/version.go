@@ -8,6 +8,10 @@ var (
 	BuildDate = "unknown"
 )
 
-func String() string {
+func LongVersion() string {
 	return fmt.Sprintf("%s commit=%s built=%s", Version, Commit, BuildDate)
+}
+
+func ShortVersion() string {
+	return fmt.Sprintf("%s", Version)
 }

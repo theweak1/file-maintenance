@@ -1,4 +1,4 @@
-# File Maintenance Tool
+# 🧰 File Maintenance Tool
 
 A Windows-first, unattended file maintenance utility for scheduled cleanup jobs. The core cleanup logic is isolated from OS-specific setup, notification, path, and disk-space behavior through the `internal/platform` abstraction.
 
@@ -7,6 +7,7 @@ The tool can:
 - Scan configured file and folder paths.
 - Identify files older than the configured retention period.
 - Back up eligible files before deletion when backup is enabled for that path.
+- Validate backup destination capacity once per queued batch instead of once per file.
 - Delete eligible files directly when backup is intentionally disabled for that path.
 - Write operational, error, and count logs with retention cleanup.
 - Launch a Windows setup wizard on first run when `config.ini` is missing.
@@ -14,7 +15,7 @@ The tool can:
 
 ---
 
-## Current Status
+## 🚦 Current Status
 
 This project is currently optimized for Windows scheduled execution.
 
@@ -22,14 +23,14 @@ This project is currently optimized for Windows scheduled execution.
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | Windows setup wizard                | Implemented with embedded PowerShell and Windows Forms.                                                 |
 | Windows notifications               | Implemented through PowerShell / Windows Forms message boxes.                                           |
-| Windows backup space validation     | Implemented through `GetDiskFreeSpaceEx`.                                                               |
+| Windows backup space validation     | Implemented through `GetDiskFreeSpaceEx`; checked once per queued worker batch.                         |
 | Linux/macOS config check            | Implemented as a safe `config.ini` existence check.                                                     |
-| Linux/macOS backup space validation | Not implemented yet. Backup-enabled runs on those platforms will fail once space validation is reached. |
+| Linux/macOS backup space validation | Not implemented yet. Backup-enabled runs on those platforms will fail when batch space validation runs. |
 | GitHub Actions build matrix         | Windows amd64, Linux amd64, macOS amd64, and macOS arm64.                                               |
 
 ---
 
-## Current Default Layout
+## 📁 Current Default Layout
 
 The application currently uses portable defaults beside the executable:
 
@@ -54,7 +55,7 @@ fileMaintenance.exe -config-dir "C:\path\to\config" -log-dir "C:\path\to\logs"
 
 ---
 
-## First-Time Setup
+## 🪄 First-Time Setup
 
 On Windows, startup checks whether this file exists:
 
@@ -68,7 +69,7 @@ On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` i
 
 ---
 
-## How It Works
+## ⚙️ How It Works
 
 1. **Startup**
    - Resolve the active OS platform implementation.
@@ -94,7 +95,10 @@ On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` i
 
 5. **Maintenance Worker**
    - Scan configured paths using bounded walkers.
-   - Process file operations through one serialized processor.
+   - Collect candidate jobs into an in-memory batch up to `queue-size`.
+   - When the batch is full, or when walking finishes, total the backup-enabled file sizes in that batch.
+   - Validate backup destination capacity once for the full batch before copying or deleting.
+   - Process the full batch through one serialized processor before accepting the next batch.
    - Copy before delete when backup is enabled.
    - Delete directly only when backup is disabled for that path.
    - Track per-path delete counts.
@@ -105,7 +109,7 @@ On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` i
 
 ---
 
-## Execution Flow
+## 🧭 Execution Flow
 
 The high-level Mermaid source is maintained in:
 
@@ -119,13 +123,13 @@ The detailed execution flow is maintained in:
 docs/diagrams/execution-flow.md
 ```
 
-The execution flow uses concurrent path discovery but serialized file operations. This avoids uncontrolled SMB/network load and keeps backup/delete behavior predictable.
+The execution flow uses concurrent path discovery, batch-level backup-space validation, and serialized file operations. While a full batch is being checked and processed, walkers are blocked from adding more jobs, which prevents unbounded queue growth and avoids repeated per-file destination-space checks.
 
 ---
 
-## Command-Line Flags
+## 🧾 Command-Line Flags
 
-### Retention and Logging
+### ⏳ Retention and Logging
 
 | Flag             | Default | Description                                                                                                      |
 | ---------------- | ------: | ---------------------------------------------------------------------------------------------------------------- |
@@ -134,19 +138,19 @@ The execution flow uses concurrent path discovery but serialized file operations
 | `-no-logs`       | `false` | Disable file logging and write to stdout/stderr.                                                                 |
 | `-version`       | `false` | Print version metadata and exit.                                                                                 |
 
-### Paths
+### 📂 Paths
 
 | Flag          | Default        | Description                                                    |
 | ------------- | -------------- | -------------------------------------------------------------- |
 | `-config-dir` | `<exe>/config` | Directory containing `config.ini` and optional `logging.json`. |
 | `-log-dir`    | `<exe>/logs`   | Directory where log files are written.                         |
 
-### Resource Controls
+### 🧱 Resource Controls
 
 | Flag           | Default | Description                                                                                                               |
 | -------------- | ------: | ------------------------------------------------------------------------------------------------------------------------- |
 | `-walkers`     |     `1` | Number of concurrent path walkers.                                                                                        |
-| `-queue-size`  |   `300` | Buffered job queue size.                                                                                                  |
+| `-queue-size`  |   `300` | Maximum jobs collected in one worker batch before destination space is checked and the batch is processed.                |
 | `-max-files`   |     `0` | Maximum jobs to handle in one run. `0` means unlimited.                                                                   |
 | `-max-runtime` |   `30m` | Maximum run duration. `0` means unlimited. CLI values use Go duration strings such as `55m`, `1h`, or `30s`.              |
 | `-cooldown`    |     `0` | Delay after each processed job. Useful for SMB/network pacing. CLI values use Go duration strings such as `50ms` or `1s`. |
@@ -156,9 +160,9 @@ Important: after CLI flags are parsed, non-zero values from `config.ini` overrid
 
 ---
 
-## Configuration
+## 🛠️ Configuration
 
-### `config/config.ini`
+### 🧩 `config/config.ini`
 
 Required sections:
 
@@ -197,13 +201,13 @@ Current implementation note: `[advanced]` duration values are parsed as millisec
 
 CLI flags use duration strings like `-max-runtime 55m` and `-cooldown 50ms`; `config.ini` currently uses numeric milliseconds.
 
-### `[backup]`
+### 💾 `[backup]`
 
 | Key    | Description                                                |
 | ------ | ---------------------------------------------------------- |
 | `path` | Backup destination root path. Can be local or network/SMB. |
 
-### `[paths]`
+### 🗂️ `[paths]`
 
 Each standalone line is a file or folder path followed by optional backup behavior:
 
@@ -226,7 +230,7 @@ Supported path types:
 
 Comments and blank lines are ignored. Lines beginning with `;` or `#` are treated as comments.
 
-### `config/logging.json`
+### 📝 `config/logging.json`
 
 Optional logging configuration:
 
@@ -246,7 +250,7 @@ Unknown log levels default to enabled.
 
 ---
 
-## Backup Layout
+## 🗃️ Backup Layout
 
 Backups are written under a run-date folder:
 
@@ -268,22 +272,25 @@ The active backup path builder preserves the source folder structure under the d
 
 ---
 
-## Backup Space Validation
+## 📏 Backup Space Validation
 
-When backup is enabled for a path, the worker tracks the size of backup-enabled jobs and checks available space on the backup destination.
+When backup is enabled for a path, each queued `FileJob` carries the source file size. The worker collects jobs into an in-memory batch with a maximum size controlled by `queue-size`.
 
-The worker performs two checks:
+The backup-space check now happens once per batch:
 
-1. Queue-level check: validates the total size of pending backup jobs.
-2. Per-file check: validates available destination space immediately before copying a file.
+1. Walkers enqueue eligible files until the batch reaches `queue-size`, or until no more candidate files remain.
+2. The worker totals the size of backup-enabled files in the current batch. Delete-only jobs do not increase the required backup bytes.
+3. The worker calls `AvailableBytes(backupRoot)` once and compares the available destination space with the full batch requirement.
+4. If enough space is available, the worker processes the complete batch serially before accepting the next batch.
+5. If space is insufficient, the worker cancels the run before the batch is copied or deleted, so the source files remain in place.
 
-If available backup space is insufficient, the worker cancels the run and does not delete the source file.
+This replaces the previous per-file destination-space check. If another process consumes backup-destination space after the batch check, an individual copy can still fail; in that case, the source file is not deleted because deletion only occurs after a successful backup copy.
 
-Current platform limitation: this validation is implemented for Windows. Linux and macOS currently return a `disk space check not implemented for this platform` error when backup-enabled work reaches this validation.
+Current platform limitation: this validation is implemented for Windows. Linux and macOS currently return a `disk space check not implemented for this platform` error when backup-enabled work reaches batch validation.
 
 ---
 
-## Logging
+## 📜 Logging
 
 Default file logs:
 
@@ -297,7 +304,7 @@ Per-path delete counts are logged after processing completes so totals reflect a
 
 ---
 
-## OS-Specific Platform Abstraction
+## 🖥️ OS-Specific Platform Abstraction
 
 The platform layer lives under `internal/platform`:
 
@@ -326,15 +333,29 @@ Windows provides the setup wizard and disk-space implementation. Linux and macOS
 
 ---
 
-## Windows Task Scheduler Setup
+## 🗓️ Windows Task Scheduler Setup
 
 Recommended Task Scheduler action fields for the current Windows deployment:
 
-| Task Scheduler field | Value                                                                                                                                                                      |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Program/script       | `powershell.exe`                                                                                                                                                           |
-| Add arguments        | `-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "& 'C:\FileCopy\fileMaintenance\fileMaintenance.exe' -days 0 -walkers 1 -max-runtime 55m -cooldown 50ms"` |
-| Start in             | `C:\FileCopy\FileMaintenance`                                                                                                                                              |
+Program/script:
+
+```text
+powershell.exe
+```
+
+Add arguments (shown wrapped; paste as one line in Task Scheduler):
+
+```text
+-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden
+-Command "& 'C:\FileCopy\fileMaintenance\fileMaintenance.exe' -days 0
+-walkers 1 -max-runtime 55m -cooldown 50ms"
+```
+
+Start in:
+
+```text
+C:\FileCopy\FileMaintenance
+```
 
 Equivalent PowerShell command, split for readability:
 
@@ -364,7 +385,7 @@ For the current scheduled command:
 
 ---
 
-## GitHub Actions Release Build
+## 🚀 GitHub Actions Release Build
 
 The GitHub Actions workflow is located at:
 
@@ -397,9 +418,10 @@ Check build metadata locally or from a release binary with:
 
 ---
 
-## Safety Guarantees
+## 🛡️ Safety Guarantees
 
 - No deletion occurs if backup is enabled and the backup root is inaccessible.
+- No batch is copied or deleted if the total backup-enabled size of that batch exceeds available backup destination space.
 - No deletion occurs if backup copy fails.
 - File operations are serialized to reduce network and disk contention.
 - Resource controls prevent unbounded walking or job queue growth.
@@ -407,7 +429,7 @@ Check build metadata locally or from a release binary with:
 
 ---
 
-## Development and Testing
+## 🧪 Development and Testing
 
 The project currently targets the Go version declared in `go.mod`.
 
@@ -415,6 +437,15 @@ Run tests:
 
 ```powershell
 go test ./...
+```
+
+Run the worker batch-space tests only:
+
+```powershell
+go test ./internal/maintenance `
+  -run "BackupSpaceCheckedOncePerBatch|InsufficientBackupSpaceForBatch" `
+  -v `
+  -count=1
 ```
 
 Build:
@@ -433,6 +464,6 @@ Note: the current `build.ps1 smoke` target still checks for legacy `config/folde
 
 ---
 
-## License
+## 📄 License
 
 Internal / private use.

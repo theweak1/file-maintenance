@@ -2,7 +2,7 @@ package version
 
 import "testing"
 
-func TestString_Table(t *testing.T) {
+func TestVersion_Table(t *testing.T) {
 	originalVersion := Version
 	originalCommit := Commit
 	originalBuildDate := BuildDate
@@ -14,32 +14,60 @@ func TestString_Table(t *testing.T) {
 	})
 
 	tests := []struct {
-		name      string
-		version   string
-		commit    string
-		buildDate string
-		want      string
+		name        string
+		version     string
+		versionType string
+		commit      string
+		buildDate   string
+		want        string
 	}{
 		{
-			name:      "default values",
-			version:   "dev",
-			commit:    "unknown",
-			buildDate: "unknown",
-			want:      "dev commit=unknown built=unknown",
+			name:        "default values with longVersion",
+			version:     "dev",
+			versionType: "longVersion",
+			commit:      "unknown",
+			buildDate:   "unknown",
+			want:        "dev commit=unknown built=unknown",
 		},
 		{
-			name:      "release values",
-			version:   "v0.1.0",
-			commit:    "abc123def456",
-			buildDate: "2026-06-20T18:45:00Z",
-			want:      "v0.1.0 commit=abc123def456 built=2026-06-20T18:45:00Z",
+			name:        "release values with longVersion",
+			version:     "v0.1.0",
+			versionType: "longVersion",
+			commit:      "abc123def456",
+			buildDate:   "2026-06-20T18:45:00Z",
+			want:        "v0.1.0 commit=abc123def456 built=2026-06-20T18:45:00Z",
 		},
 		{
-			name:      "dev build with short commit",
-			version:   "dev-abc1234",
-			commit:    "abc1234",
-			buildDate: "2026-06-20T19:00:00Z",
-			want:      "dev-abc1234 commit=abc1234 built=2026-06-20T19:00:00Z",
+			name:        "dev build with short commit and longVersion",
+			version:     "dev-abc1234",
+			versionType: "longVersion",
+			commit:      "abc1234",
+			buildDate:   "2026-06-20T19:00:00Z",
+			want:        "dev-abc1234 commit=abc1234 built=2026-06-20T19:00:00Z",
+		},
+		{
+			name:        "dev build with short commit and shortVersion",
+			version:     "dev-abc1234",
+			versionType: "shortVersion",
+			commit:      "abc1234",
+			buildDate:   "2026-06-20T19:00:00Z",
+			want:        "dev-abc1234",
+		},
+		{
+			name:        "release values with shortVersion",
+			version:     "v0.1.0",
+			versionType: "shortVersion",
+			commit:      "abc123def456",
+			buildDate:   "2026-06-20T18:45:00Z",
+			want:        "v0.1.0",
+		},
+		{
+			name:        "default values with shortVersion",
+			version:     "dev",
+			versionType: "shortVersion",
+			commit:      "unknown",
+			buildDate:   "unknown",
+			want:        "dev",
 		},
 	}
 
@@ -49,10 +77,15 @@ func TestString_Table(t *testing.T) {
 			Commit = tt.commit
 			BuildDate = tt.buildDate
 
-			got := String()
+			var got string
+			if tt.versionType == "longVersion" {
+				got = LongVersion()
+			} else {
+				got = ShortVersion()
+			}
 
 			if got != tt.want {
-				t.Fatalf("String() = %q, want %q", got, tt.want)
+				t.Fatalf("%s() = %q, want %q", tt.versionType, got, tt.want)
 			}
 		})
 	}

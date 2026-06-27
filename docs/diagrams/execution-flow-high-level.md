@@ -12,13 +12,21 @@ flowchart TD
     F -->|No on Linux/macOS| I
     F -->|Yes| J
     J --> K{Any path has<br/>backup enabled?}
-    K -->|No| L[Delete-only mode<br/>skip backup validation]
+    K -->|No| L[Delete-only mode<br/>skip startup backup validation]
     K -->|Yes| M[Validate backup path]
     M -->|Invalid| N[Show critical notification<br/>exit with error]
     M -->|Valid| O[Run maintenance worker]
     L --> O
-    O --> P[Prune old logs]
-    P --> Q[Exit success]
+    O --> P[Walk configured paths<br/>and collect one batch]
+    P --> Q{Batch has<br/>backup-enabled files?}
+    Q -->|Yes| R[Check backup destination<br/>space once for batch]
+    R -->|Insufficient| S[Cancel run<br/>leave sources in place]
+    R -->|Sufficient| T[Process full batch serially]
+    Q -->|No| T
+    T --> U{More candidate files?}
+    U -->|Yes| P
+    U -->|No| V[Prune old logs]
+    V --> W[Exit success]
 
     style A fill:#e1f5fe
     style C fill:#fff3e0
@@ -26,5 +34,6 @@ flowchart TD
     style G fill:#fff3e0
     style I fill:#ffcdd2
     style N fill:#ffcdd2
-    style Q fill:#c8e6c9
+    style S fill:#ffcdd2
+    style W fill:#c8e6c9
 ```

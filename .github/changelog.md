@@ -1,36 +1,20 @@
 # Changelog
 
-## Release - 2026-06-21
-
-### Added
-
-- docs: add the current Windows Task Scheduler action fields used for the scheduled maintenance run.
-- docs: add a GitHub Actions release-build section covering test/build matrix behavior, release assets, and injected version metadata.
-- docs: add `-version` usage and clarify build metadata output.
+## Release - 2026-06-27
 
 ### Changed
 
-- docs: clarify that portable defaults use `<exe>/config` and `<exe>/logs` for scheduled/portable deployments.
-- docs: clarify that non-zero `config.ini` values override CLI/default values after startup flag parsing.
-- docs: clarify that CLI duration flags use Go duration strings such as `55m` and `50ms`, while current `[advanced]` config durations are parsed as numeric milliseconds.
-- docs: update the platform abstraction section to include backup destination free-space checks through `AvailableBytes`.
-- docs: remove unsupported README claims about empty directory cleanup and narrow the backup-layout description to the active worker behavior.
-- docs: clarify that Windows currently implements backup space validation, while Linux/macOS still return a not-implemented error for backup-enabled runs.
+- worker: replace per-file backup destination space checks with batch-level validation.
+- worker: collect jobs into an in-memory batch up to `queue-size`, check the total backup-enabled byte requirement once, then process the complete batch before accepting more work.
+- worker: use an unbuffered job input channel so walkers are backpressured while the current batch is being validated and processed.
+- docs: update README backup-space behavior, safety guarantees, worker flow, and queue-size description.
+- docs: update execution-flow diagrams to show batch collection, one destination-space check per batch, serialized processing, and insufficient-space cancellation.
 
-### Existing release-workflow updates already in this release
+### Added
 
-- Fix typo in build workflow name (9b41db1).
-- ci: checkout repository before creating release (c0d66d6).
-- ci: collect release assets safely (e4089c0).
-- ci: use platform-specific archive commands (ddadd8e).
-- ci: add version metadata for release builds (140cba1).
-- feat: add backup destination disk space validation (72b2f23).
+- tests: add integration coverage confirming backup space is checked once per batch instead of once per file.
+- tests: add integration coverage confirming an insufficient-space batch cancels before source files are deleted.
 
-### Review notes
+### Validation notes
 
-- `build.ps1 smoke` still checks for legacy `config/folders.txt` and `config/backup.txt`, while the runtime now uses `config/config.ini`.
-- Empty directory cleanup is mentioned in worker comments, but no active cleanup call was found in the current worker path.
-- The stricter `backupDestPath` helper exists, but the active worker currently uses `buildBackupPath`.
-- The Windows setup wizard labels max runtime as minutes, but the current config parser reads `[advanced] max-runtime` as milliseconds.
-
-If this file is present at release time and was updated in this release commit, its contents will be used as the release notes. Otherwise the workflow will fall back to the default automated note.
+- The focused worker tests can be run with `go test ./internal/maintenance -run "BackupSpaceCheckedOncePerBatch|InsufficientBackupSpaceForBatch" -v -count=1`.

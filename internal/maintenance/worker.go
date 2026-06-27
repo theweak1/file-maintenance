@@ -45,13 +45,6 @@ type diskSpaceChecker interface {
 	AvailableBytes(path string) (uint64, error)
 }
 
-func atomicSubUint64(addr *uint64, delta uint64) {
-	if delta == 0 {
-		return
-	}
-	atomic.AddUint64(addr, ^(delta - 1))
-}
-
 func storeFirstErr(firstErr *atomic.Value, err error) {
 	if firstErr.Load() == nil {
 		firstErr.Store(err)
@@ -128,19 +121,24 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// jobs is a bounded queue of candidate files for the processor.
+	// jobInput feeds candidate files from the folder walkers into the batcher.
 	//
-	// Bounded queue == backpressure:
-	// - prevents unbounded memory growth if walking outruns processing
-	// - forces walkers to slow down when the processor is busy (especially important for SMB)
-	jobs := make(chan FileJob, cfg.QueueSize)
+	// The actual "queue" is the in-memory batch slice below. This channel is
+	// intentionally unbuffered so that when the batcher is processing a full batch,
+	// walkers block instead of adding more files. That gives us this flow:
+	//
+	//  1. collect up to cfg.QueueSize jobs
+	//  2. check backup destination space once for that batch
+	//  3. process/delete everything in that batch
+	//  4. accept the next batch
+	jobInput := make(chan FileJob)
 
-	// processed counts how many jobs the processor handled (global).
+	// processed counts how many jobs were handled globally.
 	// Used only for stop conditions and end-of-run reporting.
 	var processed uint64
-	var pendingBackupBytes uint64
 
-	// firstErr stores the first "hard" error encountered during folder walking.
+	// firstErr stores the first "hard" error encountered during folder walking or
+	// batch-level backup-space validation.
 	//
 	// Notes:
 	// - Walk errors for individual paths are logged and ignored (non-fatal).
@@ -151,12 +149,8 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 	// -------------------------------------------------------------------------
 	// Stop conditions helper
 	//
-	// shouldStop() is consulted by BOTH walkers and the processor so the system
-	// can stop quickly without extra coordination or complex signaling.
-	//
-	// Important behavior:
-	// - When shouldStop() becomes true, the processor exits early.
-	// - Any jobs still buffered in `jobs` will not be processed (intentional).
+	// shouldStop() is consulted by BOTH walkers and the batch processor so the
+	// system can stop quickly without extra coordination or complex signaling.
 	// -------------------------------------------------------------------------
 	shouldStop := func() bool {
 		if cfg.MaxRuntime > 0 && time.Since(start) >= cfg.MaxRuntime {
@@ -206,134 +200,174 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 		return true
 	}
 
-	enqueueJob := func(job FileJob) error {
-		if job.backup {
-			atomic.AddUint64(&pendingBackupBytes, job.sizeBytes)
-		}
-
-		select {
-		case <-ctx.Done():
+	backupBytesForBatch := func(batch []FileJob) uint64 {
+		var requiredBytes uint64
+		for _, job := range batch {
 			if job.backup {
-				atomicSubUint64(&pendingBackupBytes, job.sizeBytes)
+				requiredBytes += job.sizeBytes
 			}
-			return context.Canceled
+		}
+		return requiredBytes
+	}
 
-		case jobs <- job:
+	processJob := func(job FileJob) bool {
+		if ctx.Err() != nil {
+			return false
 		}
 
+		// Stop quickly if we hit run limits.
+		if shouldStop() {
+			log.Info("Stop condition met, halting processing")
+			cancel()
+			return false
+		}
+
+		// Build destination path:
+		// backupRoot/<DDMmmYY>/<relative folder structure>/<filename>
+		dstPath, err := buildBackupPath(backupRoot, job.folderRoot, job.srcPath)
+		if err != nil {
+			log.Errorf("Building backup path failed for %s: %v", job.srcPath, err)
+			atomic.AddUint64(&processed, 1)
+			return true
+		}
+
+		// Backup phase (unless disabled for this path):
+		// - If destination already exists, skip backup to avoid overwriting.
+		// - Otherwise copy with retries/backoff to tolerate transient issues.
+		//
+		// Important: disk-space validation is intentionally NOT done here.
+		// The worker validates backup space once per batch before this function runs.
 		if job.backup {
-			queuedBytes := atomic.LoadUint64(&pendingBackupBytes)
-
-			// Queue-level check.
-			//
-			// This checks the total size of backup-enabled files currently queued.
-			// It is intentionally conservative: if the queued backup size exceeds
-			// available destination space, cancel the run before more work is done.
-			if queuedBytes > 0 && !ensureBackupSpace(queuedBytes, "queued backup files") {
-				return context.Canceled
+			if DoesFileExist(dstPath) {
+				log.Warnf("File already exists in backup, skipping: %s", dstPath)
+			} else {
+				if err := copyFileWithRetry(ctx, job.srcPath, dstPath, cfg.Retries, log); err != nil {
+					log.Errorf("Backup failed for %s -> %s: %v", job.srcPath, dstPath, err)
+					atomic.AddUint64(&processed, 1)
+					return true // do NOT delete if backup failed
+				}
+				log.Successf("Backed up: %s -> %s", job.srcPath, dstPath)
 			}
 		}
 
-		return nil
+		// Delete phase:
+		// - Only delete after successful backup (or immediately if backup is disabled).
+		// - This ordering is the main safety guarantee of the worker.
+		if err := DeleteFile(job.srcPath); err != nil {
+			log.Errorf("Delete failed for %s: %v", job.srcPath, err)
+		} else {
+			log.Successf("Deleted: %s", job.srcPath)
+
+			// Per-folder counting:
+			// Increment only on successful delete so the count reflects reality.
+			perFolderMu.Lock()
+			deletedByFolder[job.folderRoot]++
+			perFolderMu.Unlock()
+		}
+
+		// Global processed count for stop conditions and run reporting.
+		atomic.AddUint64(&processed, 1)
+
+		// Optional throttle:
+		// - Reduces burst load on SMB/network shares
+		// - Helps keep the machine responsive during scheduled runs
+		if cfg.Cooldown > 0 {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-time.After(cfg.Cooldown):
+			}
+		}
+
+		return true
+	}
+
+	processBatch := func(batch []FileJob, batchNumber uint64) bool {
+		if len(batch) == 0 {
+			return true
+		}
+
+		requiredBytes := backupBytesForBatch(batch)
+		if requiredBytes > 0 {
+			reason := fmt.Sprintf("batch %d (%d queued file(s))", batchNumber, len(batch))
+			if !ensureBackupSpace(requiredBytes, reason) {
+				return false
+			}
+		}
+
+		log.Debugf(
+			"Processing batch %d: jobs=%d backupBytes=%d",
+			batchNumber,
+			len(batch),
+			requiredBytes,
+		)
+
+		for _, job := range batch {
+			if !processJob(job) {
+				return false
+			}
+		}
+
+		return true
 	}
 
 	// -------------------------------------------------------------------------
-	// Processor goroutine (single-threaded file operations)
+	// Batcher / processor goroutine (single-threaded file operations)
 	//
-	// Reads jobs from the channel and, for each job:
-	//  1) builds backup destination path (dated folder + preserved structure)
-	//  2) optionally backs up (with retry/backoff)
-	//  3) deletes the source file (only after successful backup, unless NoBackup)
-	//  4) increments counters + optionally cleans empty directories
+	// Reads candidate jobs from jobInput and processes them in batches:
+	//  1) collect up to cfg.QueueSize jobs
+	//  2) check total backup space for the batch once
+	//  3) process the complete batch one file at a time
 	//
-	// This is intentionally one-at-a-time for predictable resource usage.
+	// While a full batch is processing, walkers cannot add more jobs because
+	// jobInput is unbuffered. This keeps the queue from growing and avoids one
+	// disk-space check per file.
 	// -------------------------------------------------------------------------
 	var procWG sync.WaitGroup
 	procWG.Add(1)
 	go func() {
 		defer procWG.Done()
 
-		for job := range jobs {
+		batch := make([]FileJob, 0, cfg.QueueSize)
+		var batchNumber uint64
+
+		flush := func() bool {
+			if len(batch) == 0 {
+				return true
+			}
+
+			batchNumber++
+			currentBatch := batch
+			batch = make([]FileJob, 0, cfg.QueueSize)
+
+			return processBatch(currentBatch, batchNumber)
+		}
+
+		for job := range jobInput {
 			if ctx.Err() != nil {
 				return
 			}
 
-			if job.backup {
-				atomicSubUint64(&pendingBackupBytes, job.sizeBytes)
-			}
-
-			// Stop quickly if we hit run limits.
-			if shouldStop() {
-				log.Info("Stop condition met, halting processing")
-				// We do not drain jobs here:
-				// - walkers will stop producing as they observe shouldStop/ctx
-				// - main will close(jobs) after walkers exit
-				return
-			}
-
-			// Build destination path:
-			// backupRoot/<DDMmmYY>/<relative folder structure>/<filename>
-			dstPath, err := buildBackupPath(backupRoot, job.folderRoot, job.srcPath)
-			if err != nil {
-				log.Errorf("Building backup path failed for %s: %v", job.srcPath, err)
-				continue
-			}
-
-			// Backup phase (unless disabled for this path):
-			// - If destination already exists, skip backup to avoid overwriting.
-			// - Otherwise copy with retries/backoff to tolerate transient issues (SMB hiccups, locks, etc.).
-			if job.backup {
-				if DoesFileExist(dstPath) {
-					log.Warnf("File already exists in backup, skipping: %s", dstPath)
-				} else {
-					if !ensureBackupSpace(job.sizeBytes, fmt.Sprintf("file %s", job.srcPath)) {
-						return
-					}
-
-					if err := copyFileWithRetry(ctx, job.srcPath, dstPath, cfg.Retries, log); err != nil {
-						log.Errorf("Backup failed for %s -> %s: %v", job.srcPath, dstPath, err)
-						continue // do NOT delete if backup failed
-					}
-					log.Successf("Backed up: %s -> %s", job.srcPath, dstPath)
-				}
-			}
-
-			// Delete phase:
-			// - Only delete after successful backup (or immediately if NoBackup).
-			// - This ordering is the main safety guarantee of the worker.
-			if err := DeleteFile(job.srcPath); err != nil {
-				log.Errorf("Delete failed for %s: %v", job.srcPath, err)
-			} else {
-				log.Successf("Deleted: %s", job.srcPath)
-
-				// Per-folder counting:
-				// Increment only on successful delete so the count reflects reality.
-				perFolderMu.Lock()
-				deletedByFolder[job.folderRoot]++
-				perFolderMu.Unlock()
-
-				// Optional cleanup: remove now-empty directories bottom-up.
-				//
-				// Invariants:
-				// - must NOT delete above the configured folder root
-				// - Windows requires directories to be empty before removing them
-			}
-
-			// Global processed count for stop conditions and run reporting.
-			atomic.AddUint64(&processed, 1)
-
-			// Optional throttle:
-			// - Reduces burst load on SMB/network shares
-			// - Helps keep the machine responsive during scheduled runs
-			if cfg.Cooldown > 0 {
-				select {
-				case <-ctx.Done():
+			batch = append(batch, job)
+			if len(batch) >= cfg.QueueSize {
+				if !flush() {
 					return
-				case <-time.After(cfg.Cooldown):
 				}
 			}
 		}
+
+		// Process the final partial batch after walkers finish.
+		_ = flush()
 	}()
+
+	enqueueJob := func(job FileJob) error {
+		select {
+		case <-ctx.Done():
+			return context.Canceled
+		case jobInput <- job:
+			return nil
+		}
+	}
 
 	// -------------------------------------------------------------------------
 	// Folder walkers (bounded concurrency)
@@ -479,12 +513,12 @@ func Worker(pathconfig []types.PathConfig, backupRoot string, cfg types.AppConfi
 	// Shutdown sequence
 	//
 	// 1) wait for walkers to finish producing jobs
-	// 2) close jobs channel (signals processor to stop once drained)
+	// 2) close job input channel (signals processor to flush the final batch)
 	// 3) wait for processor to finish
 	// 4) log final per-folder deletion counts (now accurate)
 	// -------------------------------------------------------------------------
 	walkWG.Wait()
-	close(jobs)
+	close(jobInput)
 	procWG.Wait()
 
 	// Accurate per-path reporting happens AFTER processing finishes.
