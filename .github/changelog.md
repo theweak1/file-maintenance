@@ -17,6 +17,8 @@
 - worker: collect jobs into an in-memory batch up to `queue-size`, check the total backup-enabled byte requirement once, then process the complete batch before accepting more work.
 - worker: use an unbuffered job input channel so walkers are backpressured while the current batch is being validated and processed.
 - docs: update README and execution-flow diagrams for setup-first mode, explicit `-run`, config split, CLI precedence, and batch-level backup-space validation.
+- setup: pre-populate the Windows setup wizard from existing `config.ini` values, including backup paths, backup flags, days/log retention, and advanced duration settings.
+- setup: preserve existing path-list and numeric values when reopening the wizard so previously saved configuration is carried forward.
 
 ### Added
 
@@ -27,6 +29,7 @@
 - tests: add setup exit-code mapping coverage for Cancel, Save & Close, and Save & Run.
 - tests: add integration coverage confirming backup space is checked once per batch instead of once per file.
 - tests: add integration coverage confirming an insufficient-space batch cancels before source files are deleted.
+- tests: add embedded setup-script coverage for loading existing config values into the Windows setup wizard.
 
 ### Validation notes
 

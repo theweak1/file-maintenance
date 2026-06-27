@@ -14,6 +14,156 @@ if (-not (Test-Path $ConfigDir)) {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
+function Read-IniFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $ini = @{}
+    $section = ""
+
+    if (-not (Test-Path $Path)) {
+        return $ini
+    }
+
+    foreach ($rawLine in Get-Content -Path $Path) {
+        $line = $rawLine.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($line)) {
+            continue
+        }
+
+        if ($line.StartsWith(";") -or $line.StartsWith("#")) {
+            continue
+        }
+
+        if ($line -match "^\[(.+)\]$") {
+            $section = $matches[1].Trim()
+            if (-not $ini.ContainsKey($section)) {
+                if ($section -eq "paths") {
+                    $ini[$section] = @()
+                }
+                else {
+                    $ini[$section] = @{}
+                }
+            }
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($section)) {
+            continue
+        }
+
+        if ($section -eq "paths" -and -not ($line -match "^([^=]+)=(.*)$")) {
+            $ini[$section] = @($ini[$section]) + $line
+            continue
+        }
+
+        if ($line -match "^([^=]+)=(.*)$") {
+            $key = $matches[1].Trim()
+            $value = $matches[2].Trim()
+
+            if (-not $ini.ContainsKey($section) -or $ini[$section] -isnot [hashtable]) {
+                $ini[$section] = @{}
+            }
+
+            $ini[$section][$key] = $value
+        }
+    }
+
+    return $ini
+}
+
+function Set-NumericValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Control,
+
+        [AllowNull()]
+        $Value
+    )
+
+    if ($null -eq $Value) {
+        return
+    }
+
+    try {
+        $number = [decimal]$Value
+
+        if ($number -lt $Control.Minimum) {
+            $number = $Control.Minimum
+        }
+
+        if ($number -gt $Control.Maximum) {
+            $number = $Control.Maximum
+        }
+
+        $Control.Value = $number
+    }
+    catch {
+        # Keep the current/default value if an existing config value is invalid.
+    }
+}
+
+function Convert-DurationValue {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value,
+
+        [ValidateSet("Milliseconds", "Minutes")]
+        [string]$TargetUnit = "Milliseconds"
+    )
+
+    $duration = $Value.Trim().ToLowerInvariant()
+
+    if ([string]::IsNullOrWhiteSpace($duration)) {
+        return $null
+    }
+
+    try {
+        [decimal]$milliseconds = 0
+
+        if ($duration.EndsWith("ms")) {
+            $milliseconds = [decimal]$duration.Substring(0, $duration.Length - 2)
+        }
+        elseif ($duration.EndsWith("s")) {
+            $milliseconds = [decimal]$duration.Substring(0, $duration.Length - 1) * 1000
+        }
+        elseif ($duration.EndsWith("m")) {
+            $milliseconds = [decimal]$duration.Substring(0, $duration.Length - 1) * 60000
+        }
+        elseif ($duration.EndsWith("h")) {
+            $milliseconds = [decimal]$duration.Substring(0, $duration.Length - 1) * 3600000
+        }
+        else {
+            # Match the Go config parser's backward-compatible behavior:
+            # plain numeric duration values are interpreted as milliseconds.
+            $milliseconds = [decimal]$duration
+        }
+
+        if ($TargetUnit -eq "Minutes") {
+            return [math]::Round($milliseconds / 60000)
+        }
+
+        return [math]::Round($milliseconds)
+    }
+    catch {
+        return $null
+    }
+}
+
+function Convert-ConfigBool {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $normalized = $Value.Trim().ToLowerInvariant()
+    return $normalized -eq "true" -or $normalized -eq "yes" -or $normalized -eq "y" -or $normalized -eq "1"
+}
+
+
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "File Maintenance Tool - Setup Wizard"
 $form.Size = New-Object System.Drawing.Size(750, 700)
@@ -147,6 +297,25 @@ $form.Controls.Add($removePathBtn)
 
 $script:Paths = @()
 
+function Add-PathRow {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [bool]$Backup
+    )
+
+    $script:Paths += @{Path = $Path; Backup = $Backup}
+
+    $backupEnabled = if ($Backup) { "Yes" } else { "No" }
+    $item = New-Object System.Windows.Forms.ListViewItem($Path)
+    $item.SubItems.Add($backupEnabled) | Out-Null
+    $item.SubItems.Add("Remove") | Out-Null
+    $item.Tag = $Path
+    $pathsListView.Items.Add($item) | Out-Null
+}
+
 $addPathBtn.Add_Click({
     $path = $pathInputTextBox.Text.Trim()
     if ([string]::IsNullOrEmpty($path)) {
@@ -158,16 +327,8 @@ $addPathBtn.Add_Click({
         [System.Windows.Forms.MessageBox]::Show("The specified path does not exist.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
         return
     }
-    
-    $backupEnabled = if ($backupCheckBox.Checked) { "Yes" } else { "No" }
-    $script:Paths += @{Path=$path; Backup=$backupCheckBox.Checked}
-    
-    $item = New-Object System.Windows.Forms.ListViewItem($path)
-    $item.SubItems.Add($backupEnabled)
-    $item.SubItems.Add("Remove")
-    $item.Tag = $path
-    $pathsListView.Items.Add($item)
-    
+
+    Add-PathRow -Path $path -Backup $backupCheckBox.Checked
     $pathInputTextBox.Text = ""
 })
 
@@ -497,6 +658,99 @@ $cancelBtn.Add_Click({
         $form.Close()
     }
 })
+
+function Load-ExistingConfiguration {
+    $configFile = Join-Path $ConfigDir "config.ini"
+
+    if (-not (Test-Path $configFile)) {
+        return
+    }
+
+    try {
+        $existingConfig = Read-IniFile -Path $configFile
+
+        if ($existingConfig.ContainsKey("backup") -and $existingConfig["backup"].ContainsKey("path")) {
+            $backupTextBox.Text = $existingConfig["backup"]["path"]
+        }
+
+        if ($existingConfig.ContainsKey("paths")) {
+            $script:Paths = @()
+            $pathsListView.Items.Clear()
+
+            foreach ($line in $existingConfig["paths"]) {
+                $parts = $line.Split(",", 2)
+                $path = $parts[0].Trim()
+
+                if ([string]::IsNullOrWhiteSpace($path)) {
+                    continue
+                }
+
+                $backupEnabled = $true
+                if ($parts.Count -gt 1) {
+                    $backupValue = $parts[1].Trim().ToLowerInvariant()
+                    $backupEnabled = -not ($backupValue -eq "no" -or $backupValue -eq "n" -or $backupValue -eq "false" -or $backupValue -eq "0")
+                }
+
+                Add-PathRow -Path $path -Backup $backupEnabled
+            }
+        }
+
+        if ($existingConfig.ContainsKey("settings")) {
+            if ($existingConfig["settings"].ContainsKey("days")) {
+                Set-NumericValue -Control $daysNumeric -Value $existingConfig["settings"]["days"]
+            }
+
+            if ($existingConfig["settings"].ContainsKey("log-retention")) {
+                Set-NumericValue -Control $logRetentionNumeric -Value $existingConfig["settings"]["log-retention"]
+            }
+        }
+
+        if ($existingConfig.ContainsKey("advanced")) {
+            $advancedCheck.Checked = $true
+            $advancedPanel.Visible = $true
+
+            if ($existingConfig["advanced"].ContainsKey("walkers")) {
+                Set-NumericValue -Control $walkersNumeric -Value $existingConfig["advanced"]["walkers"]
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("queue-size")) {
+                Set-NumericValue -Control $queueNumeric -Value $existingConfig["advanced"]["queue-size"]
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("retries")) {
+                Set-NumericValue -Control $retriesNumeric -Value $existingConfig["advanced"]["retries"]
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("cooldown")) {
+                $cooldownMs = Convert-DurationValue -Value $existingConfig["advanced"]["cooldown"] -TargetUnit "Milliseconds"
+                Set-NumericValue -Control $cooldownNumeric -Value $cooldownMs
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("max-files")) {
+                Set-NumericValue -Control $maxFilesNumeric -Value $existingConfig["advanced"]["max-files"]
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("max-runtime")) {
+                $maxRuntimeMinutes = Convert-DurationValue -Value $existingConfig["advanced"]["max-runtime"] -TargetUnit "Minutes"
+                Set-NumericValue -Control $maxRuntimeNumeric -Value $maxRuntimeMinutes
+            }
+
+            if ($existingConfig["advanced"].ContainsKey("no-backup")) {
+                $noBackupCheck.Checked = Convert-ConfigBool -Value $existingConfig["advanced"]["no-backup"]
+            }
+        }
+    }
+    catch {
+        [System.Windows.Forms.MessageBox]::Show(
+            "The existing config.ini could not be loaded. The setup form will open with defaults.`n`n$_",
+            "Config Load Warning",
+            [System.Windows.Forms.MessageBoxButtons]::OK,
+            [System.Windows.Forms.MessageBoxIcon]::Warning
+        ) | Out-Null
+    }
+}
+
+Load-ExistingConfiguration
 
 $result = $form.ShowDialog()
 
