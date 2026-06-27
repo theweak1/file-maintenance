@@ -10,7 +10,8 @@ The tool can:
 - Validate backup destination capacity once per queued batch instead of once per file.
 - Delete eligible files directly when backup is intentionally disabled for that path.
 - Write operational, error, and count logs with retention cleanup.
-- Launch a Windows setup wizard on first run when `config.ini` is missing.
+- Open a Windows setup wizard by default when the executable is launched without `-run`.
+- Run backup/delete maintenance only when `-run` is passed or when Save & Run is selected in the setup wizard.
 - Print build metadata with the `-version` flag.
 
 ---
@@ -21,10 +22,10 @@ This project is currently optimized for Windows scheduled execution.
 
 | Area                                | Current status                                                                                          |
 | ----------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Windows setup wizard                | Implemented with embedded PowerShell and Windows Forms.                                                 |
+| Windows setup wizard                | Implemented with embedded PowerShell and Windows Forms; opens by default when `-run` is not passed.     |
 | Windows notifications               | Implemented through PowerShell / Windows Forms message boxes.                                           |
 | Windows backup space validation     | Implemented through `GetDiskFreeSpaceEx`; checked once per queued worker batch.                         |
-| Linux/macOS config check            | Implemented as a safe `config.ini` existence check.                                                     |
+| Linux/macOS setup mode              | No GUI setup wizard yet; default setup mode exits safely with a setup-not-implemented error.            |
 | Linux/macOS backup space validation | Not implemented yet. Backup-enabled runs on those platforms will fail when batch space validation runs. |
 | GitHub Actions build matrix         | Windows amd64, Linux amd64, macOS amd64, and macOS arm64.                                               |
 
@@ -55,17 +56,37 @@ fileMaintenance.exe -config-dir "C:\path\to\config" -log-dir "C:\path\to\logs"
 
 ---
 
-## 🪄 First-Time Setup
+## 🪄 First-Time Setup and Run Modes
 
-On Windows, startup checks whether this file exists:
+The executable is setup-first by default. This prevents backup/delete maintenance from starting accidentally when the program is double-clicked.
+
+```powershell
+fileMaintenance.exe
+```
+
+On Windows, this opens the embedded PowerShell setup wizard. The wizard writes:
 
 ```text
 <config-dir>/config.ini
 ```
 
-If it is missing, the Windows platform implementation launches the embedded PowerShell setup wizard. The wizard creates `config.ini`, and the application continues only if the file was created successfully.
+The wizard has three exit options:
 
-On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` is missing, the platform implementation returns `false` and the application exits safely without processing files.
+| Option | Behavior |
+| ------ | -------- |
+| Cancel | Close setup and do not run maintenance. |
+| Save & Close | Save `config.ini` and exit without running maintenance. |
+| Save & Run | Save `config.ini`, close setup, then immediately run backup/delete maintenance. |
+
+Background maintenance is intentionally gated behind `-run`:
+
+```powershell
+fileMaintenance.exe -run
+```
+
+When `-run` is used, the application requires an existing `config.ini`. It does not open the GUI during background/scheduled execution.
+
+On Linux and macOS, no GUI setup wizard is currently provided. Launching without `-run` exits safely with a setup-not-implemented message.
 
 ---
 
@@ -78,15 +99,16 @@ On Linux and macOS, no GUI setup wizard is currently provided. If `config.ini` i
    - Parse CLI flags.
    - Initialize logging.
 
-2. **Configuration Check**
-   - Call `platform.EnsureConfig(configDir, exeDir)`.
-   - On Windows, launch the setup wizard if `config.ini` is missing.
-   - On Linux/macOS, exit safely if `config.ini` is missing.
+2. **Mode Selection**
+   - If `-run` is not passed, open setup/configuration mode.
+   - On Windows, the setup wizard can Cancel, Save & Close, or Save & Run.
+   - If `-run` is passed, require an existing `config.ini` and do not open the GUI.
 
 3. **Configuration Loading**
    - Read `config.ini`.
-   - Parse `[backup]`, `[paths]`, and optional `[settings]` / `[advanced]` sections.
-   - Apply non-zero config values over CLI/default values.
+   - Parse the maintenance plan from `[backup]` and `[paths]`.
+   - Parse runtime settings from optional `[settings]` and `[advanced]` sections.
+   - Resolve runtime precedence as defaults → `config.ini` → explicitly passed CLI flags.
 
 4. **Safety Checks**
    - Determine whether any configured path has backup enabled.
@@ -129,6 +151,13 @@ The execution flow uses concurrent path discovery, batch-level backup-space vali
 
 ## 🧾 Command-Line Flags
 
+### 🚀 Mode
+
+| Flag | Default | Description |
+| ---- | ------: | ----------- |
+| `-run` | `false` | Run the background backup/delete maintenance process. Required for scheduled maintenance. |
+| `-setup` | `false` | Open the setup/configuration UI. This is also the default behavior when `-run` is not passed. |
+
 ### ⏳ Retention and Logging
 
 | Flag             | Default | Description                                                                                                      |
@@ -136,6 +165,7 @@ The execution flow uses concurrent path discovery, batch-level backup-space vali
 | `-days`          |     `7` | Only files older than this many days are eligible. `0` effectively selects files older than the current instant. |
 | `-log-retention` |    `30` | Number of days to keep log files.                                                                                |
 | `-no-logs`       | `false` | Disable file logging and write to stdout/stderr.                                                                 |
+| `-no-backup`     | `false` | Disable all backups for this run and delete eligible files directly. Requires intentional use with `-run`.       |
 | `-version`       | `false` | Print version metadata and exit.                                                                                 |
 
 ### 📂 Paths
@@ -156,7 +186,7 @@ The execution flow uses concurrent path discovery, batch-level backup-space vali
 | `-cooldown`    |     `0` | Delay after each processed job. Useful for SMB/network pacing. CLI values use Go duration strings such as `50ms` or `1s`. |
 | `-retries`     |     `2` | Number of backup copy retries.                                                                                            |
 
-Important: after CLI flags are parsed, non-zero values from `config.ini` override CLI/default values. Confirm `[settings]` and `[advanced]` before relying on Task Scheduler arguments.
+Important: backup/delete maintenance only runs when `-run` is passed or when Save & Run is selected in the Windows setup wizard. Runtime precedence is defaults → `config.ini` → explicitly passed CLI flags.
 
 ---
 
@@ -186,20 +216,15 @@ log-retention=30
 walkers=1
 queue-size=300
 retries=2
-cooldown=50
+cooldown=50ms
 max-files=0
-max-runtime=3300000
+max-runtime=55m
+no-backup=false
 ```
 
-Current implementation note: `[advanced]` duration values are parsed as milliseconds in `config.ini`. For example:
+`config.ini` now supports the same duration style as the CLI for runtime values such as `cooldown=50ms` and `max-runtime=55m`. Plain numeric duration values are still accepted for backward compatibility and are interpreted as milliseconds.
 
-| Setting               | Meaning                                        |
-| --------------------- | ---------------------------------------------- |
-| `cooldown=50`         | 50 milliseconds.                               |
-| `max-runtime=3300000` | 55 minutes.                                    |
-| `max-runtime=0`       | Do not override the CLI/default runtime limit. |
-
-CLI flags use duration strings like `-max-runtime 55m` and `-cooldown 50ms`; `config.ini` currently uses numeric milliseconds.
+Explicit zero values are valid in `config.ini`. For example, `days=0`, `max-files=0`, and `max-runtime=0` are treated as intentional configured values rather than ignored defaults.
 
 ### 💾 `[backup]`
 
@@ -329,7 +354,7 @@ Current responsibilities:
 - `EnsureConfig(configDir string, exeDir string) (bool, error)`
 - `AvailableBytes(path string) (uint64, error)`
 
-Windows provides the setup wizard and disk-space implementation. Linux and macOS currently perform a safe config existence check only and do not implement backup destination free-space checks yet.
+Windows provides the setup wizard, Save & Close / Save & Run actions, and disk-space implementation. Linux and macOS currently do not implement the setup wizard and do not implement backup destination free-space checks yet.
 
 ---
 
@@ -347,7 +372,7 @@ Add arguments (shown wrapped; paste as one line in Task Scheduler):
 
 ```text
 -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden
--Command "& 'C:\FileCopy\fileMaintenance\fileMaintenance.exe' -days 0
+-Command "& 'C:\FileCopy\fileMaintenance\fileMaintenance.exe' -run -days 0
 -walkers 1 -max-runtime 55m -cooldown 50ms"
 ```
 
@@ -361,7 +386,7 @@ Equivalent PowerShell command, split for readability:
 
 ```powershell
 $exe = "C:\FileCopy\fileMaintenance\fileMaintenance.exe"
-$args = "-days 0 -walkers 1 -max-runtime 55m -cooldown 50ms"
+$args = "-run -days 0 -walkers 1 -max-runtime 55m -cooldown 50ms"
 
 powershell.exe -NoProfile `
   -ExecutionPolicy Bypass `
@@ -374,14 +399,14 @@ Recommended task options:
 - Run whether user is logged on or not, if the configured paths and backup destination are available to that account.
 - Run as soon as possible after a missed start.
 - Stop the task if it runs longer than expected.
-- Review `config.ini` because non-zero values in `[settings]` and `[advanced]` override these CLI arguments.
+- Use `-run` for scheduled/background maintenance. Explicit CLI runtime flags override matching values in `config.ini`.
 
 For the current scheduled command:
 
 - `-days 0` makes almost all files older than the current instant eligible.
 - `-walkers 1` keeps folder discovery serialized.
-- `-max-runtime 55m` caps the run at 55 minutes unless overridden by `config.ini`.
-- `-cooldown 50ms` adds a short pause after each processed job unless overridden by `config.ini`.
+- `-max-runtime 55m` caps the run at 55 minutes and overrides the matching `config.ini` value because the flag is explicit.
+- `-cooldown 50ms` adds a short pause after each processed job and overrides the matching `config.ini` value because the flag is explicit.
 
 ---
 
@@ -457,10 +482,16 @@ Build:
 Run locally:
 
 ```powershell
+.\fileMaintenance.exe -run -days 0
+```
+
+Run through the helper script:
+
+```powershell
 .\build.ps1 run -Days 0
 ```
 
-Note: the current `build.ps1 smoke` target still checks for legacy `config/folders.txt` and `config/backup.txt` files. The application runtime now uses `config/config.ini`, so update the smoke task before relying on it as the primary local validation path.
+The `build.ps1 smoke` target now checks for `config/config.ini` and runs the executable with `-run -no-logs -days 0`.
 
 ---
 

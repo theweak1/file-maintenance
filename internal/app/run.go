@@ -14,51 +14,34 @@ type runtimePlatform interface {
 	AvailableBytes(path string) (uint64, error)
 }
 
-func Run(cfg types.AppConfig, log *logging.Logger, platform runtimePlatform) error {
+func Run(cfg types.AppConfig, log *logging.Logger, platform runtimePlatform, cliRuntime types.RuntimeConfigOverrides) error {
 	// -----------------------------------------------------------------------------
-	// Read all configuration from config.ini (single file).
+	// Read all configuration from config.ini.
 	//
-	// config.ini contains:
+	// config.ini now owns the maintenance plan:
 	// - [backup] section with 'path' key for backup destination
 	// - [paths] section containing all paths to process
-	// - optional [settings] and [advanced] sections for runtime defaults
 	//
-	// For unattended/scheduled runs we prefer to fail early if config are
-	// missing or malformed rather than doing partial work with unclear outcomes.
+	// Runtime behavior is resolved separately using this precedence:
+	// defaults -> config.ini -> explicitly passed CLI flags
 	// -----------------------------------------------------------------------------
-	pathconfig, backupLocation, fileCfg, err := config.ReadAllConfig(cfg.ConfigDir, log)
+	plan, fileRuntime, err := config.ReadAllConfig(cfg.ConfigDir, log)
 	if err != nil {
 		return err
 	}
 
-	// Apply non-zero config.ini values over CLI/default values.
-	//
-	// This lets the setup wizard persist common runtime settings while keeping CLI
-	// flags available as defaults or explicit overrides when config values are not
-	// provided. Zero values mean "not set" for these optional sections.
-	if fileCfg.Days != 0 {
-		cfg.Days = fileCfg.Days
-	}
-	if fileCfg.LogRetention != 0 {
-		cfg.LogRetention = fileCfg.LogRetention
-	}
-	if fileCfg.Walkers != 0 {
-		cfg.Walkers = fileCfg.Walkers
-	}
-	if fileCfg.QueueSize != 0 {
-		cfg.QueueSize = fileCfg.QueueSize
-	}
-	if fileCfg.Retries != 0 {
-		cfg.Retries = fileCfg.Retries
-	}
-	if fileCfg.Cooldown != 0 {
-		cfg.Cooldown = fileCfg.Cooldown
-	}
-	if fileCfg.MaxFiles != 0 {
-		cfg.MaxFiles = fileCfg.MaxFiles
-	}
-	if fileCfg.MaxRuntime != 0 {
-		cfg.MaxRuntime = fileCfg.MaxRuntime
+	runtimeCfg := types.DefaultRuntimeConfig()
+	runtimeCfg = types.ApplyRuntimeOverrides(runtimeCfg, fileRuntime)
+	runtimeCfg = types.ApplyRuntimeOverrides(runtimeCfg, cliRuntime)
+	cfg = types.ApplyRuntimeConfig(cfg, runtimeCfg)
+	cfg.BackupDir = plan.BackupDir
+
+	pathconfig := plan.Paths
+	if cfg.NoBackup {
+		log.Warn("No-backup mode enabled - all configured paths will run as delete-only for this run")
+		for i := range pathconfig {
+			pathconfig[i].Backup = false
+		}
 	}
 
 	// Log paths and their backup settings.
@@ -90,18 +73,18 @@ func Run(cfg types.AppConfig, log *logging.Logger, platform runtimePlatform) err
 	}
 
 	if anyBackupEnabled {
-		log.Infof("Backup location: %s", backupLocation)
+		log.Infof("Backup location: %s", plan.BackupDir)
 
 		// Safety check:
 		// Ensure the destination is reachable (especially on SMB shares) to avoid
 		// the dangerous case of deleting source files without successfully copying
 		// them somewhere safe first.
-		if !maintenance.CheckBackupPath(backupLocation) {
-			errMsg := fmt.Sprintf("Backup path is not accessible: %s\n\nPlease check path and permissions.", backupLocation)
+		if !maintenance.CheckBackupPath(plan.BackupDir) {
+			errMsg := fmt.Sprintf("Backup path is not accessible: %s\n\nPlease check path and permissions.", plan.BackupDir)
 			// Show a platform-specific critical notification for the user.
 			platform.ShowCritical("Backup Location Error", errMsg)
 
-			return fmt.Errorf("backup path not accessible: %s", backupLocation)
+			return fmt.Errorf("backup path not accessible: %s", plan.BackupDir)
 		}
 	} else {
 		log.Warn("All paths have backup disabled - running in delete-only mode")
@@ -120,7 +103,7 @@ func Run(cfg types.AppConfig, log *logging.Logger, platform runtimePlatform) err
 	// - We must return Worker errors; otherwise failures are invisible to callers
 	//   and Task Scheduler exit codes.
 	// -----------------------------------------------------------------------------
-	if err := maintenance.Worker(pathconfig, backupLocation, cfg, log, platform); err != nil {
+	if err := maintenance.Worker(pathconfig, plan.BackupDir, cfg, log, platform); err != nil {
 		return err
 	}
 

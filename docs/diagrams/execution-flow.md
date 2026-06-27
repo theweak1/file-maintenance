@@ -5,79 +5,90 @@ flowchart TD
   C[Resolve exe directory]
   D[Set portable defaults<br/>exe/config and exe/logs]
   E[Parse CLI flags]
-  F[Build AppConfig]
-  G[Initialize Logger]
-  H{Logger OK?}
-  I[Print stderr and Exit 1]
+  F[Capture explicitly passed runtime flags]
+  G[Build base AppConfig]
+  H[Initialize Logger]
+  I{Logger OK?}
+  J[Print stderr and Exit 1]
 
-  A --> B --> C --> D --> E --> F --> G --> H
-  H -->|No| I
-  H -->|Yes| J[platform.EnsureConfig]
+  A --> B --> C --> D --> E --> F --> G --> H --> I
+  I -->|No| J
+  I -->|Yes| K{Was -run passed?}
 
-  J --> K{config.ini exists?}
-  K -->|Yes| N[app.Run]
-  K -->|No on Windows| L[Launch embedded PowerShell setup wizard]
-  L --> M{Wizard created config.ini?}
-  M -->|No| I
-  M -->|Yes| N
-  K -->|No on Linux/macOS| I
+  K -->|No| L[platform.RunSetup]
+  L --> M{Setup action}
+  M -->|Cancel| J
+  M -->|Save & Close| N[Exit without maintenance]
+  M -->|Save & Run| Q[Continue to maintenance]
 
-  N --> O[Read config.ini]
-  O --> P[Parse backup path]
-  O --> Q[Parse configured paths]
-  O --> R[Parse optional settings and advanced values]
-  R --> S[Apply non-zero config values]
+  K -->|Yes| O{config.ini exists?}
+  O -->|No| P[Exit 1<br/>do not open GUI]
+  O -->|Yes| Q
 
-  S --> T{Any configured path<br/>has backup enabled?}
-  T -->|No| U[Skip startup backup-path validation]
-  T -->|Yes| V[CheckBackupPath]
-  V -->|Fail| W[Show critical notification and Exit 1]
-  V -->|OK| X[Start Worker]
-  U --> X
+  Q --> R[app.Run]
+  R --> S[Read config.ini]
+  S --> T[Parse FilePlanConfig<br/>backup path + configured paths]
+  S --> U[Parse RuntimeConfigOverrides<br/>settings + advanced]
+  U --> V[Start with RuntimeConfig defaults]
+  V --> W[Apply config.ini runtime overrides]
+  W --> X[Apply explicit CLI runtime overrides]
+  X --> Y[Copy final runtime values into AppConfig]
 
-  X --> Y[Initialize counters,<br/>context, and unbuffered job input]
-  Y --> Z[Start single batcher / processor]
-  Y --> AA[Start bounded walkers]
+  Y --> Z{NoBackup enabled?}
+  Z -->|Yes| AA[Mark all path backup flags false<br/>delete-only run]
+  Z -->|No| AB[Keep per-path backup flags]
+  AA --> AC{Any configured path<br/>has backup enabled?}
+  AB --> AC
 
-  AA --> AB[Walk configured paths]
-  AB --> AC[Find files older than retention]
-  AC --> AD[Create FileJob<br/>with source path, backup flag, and size]
-  AD --> AE[Send job to batcher]
+  AC -->|No| AD[Skip startup backup-path validation]
+  AC -->|Yes| AE[CheckBackupPath]
+  AE -->|Fail| AF[Show critical notification and Exit 1]
+  AE -->|OK| AG[Start Worker]
+  AD --> AG
 
-  Z --> AF[Collect jobs into in-memory batch]
-  AE --> AF
-  AF --> AG{Batch ready?}
-  AG -->|Reached queue-size| AH[Pause intake through backpressure]
-  AG -->|Job input closed<br/>with partial batch| AH
-  AG -->|Waiting for more jobs| AF
+  AG --> AH[Initialize counters,<br/>context, and unbuffered job input]
+  AH --> AI[Start single batcher / processor]
+  AH --> AJ[Start bounded walkers]
 
-  AH --> AI[Total backup-enabled bytes<br/>for current batch]
-  AI --> AJ{Backup bytes<br/>greater than zero?}
-  AJ -->|Yes| AK[AvailableBytes backupRoot<br/>once for this batch]
-  AK --> AL{Enough space?}
-  AL -->|No| AM[Store error, cancel context,<br/>leave sources in place]
-  AL -->|Yes| AN[Process batch serially]
-  AJ -->|No| AN
+  AJ --> AK[Walk configured paths]
+  AK --> AL[Find files older than retention]
+  AL --> AM[Create FileJob<br/>with source path, backup flag, and size]
+  AM --> AN[Send job to batcher]
 
-  AN --> AO[Process next FileJob]
-  AO --> AP{Backup enabled<br/>for job?}
-  AP -->|Yes| AQ[Build backup path and copy with retry]
-  AQ -->|Fail| AR[Log error<br/>do not delete source]
-  AQ -->|Success| AS[Delete source file]
-  AP -->|No| AS
-  AS --> AT[Increment counts and processed jobs]
-  AR --> AT
-  AT --> AU{More jobs in batch?}
-  AU -->|Yes| AO
-  AU -->|No and input open| AV[Accept next batch]
-  AV --> AF
-  AU -->|No and input closed| AZ[Wait for processor]
+  AI --> AO[Collect jobs into in-memory batch]
+  AN --> AO
+  AO --> AP{Batch ready?}
+  AP -->|Reached queue-size| AQ[Pause intake through backpressure]
+  AP -->|Job input closed<br/>with partial batch| AQ
+  AP -->|Waiting for more jobs| AO
 
-  AA --> AW[Walkers finished]
-  AW --> AX[Close job input]
-  AX --> AG
-  AM --> AZ
-  AZ --> BA[Log per-path totals]
-  BA --> BB[Prune old logs]
-  BB --> BC[Exit]
+  AQ --> AR[Total backup-enabled bytes<br/>for current batch]
+  AR --> AS{Backup bytes<br/>greater than zero?}
+  AS -->|Yes| AT[AvailableBytes backupRoot<br/>once for this batch]
+  AT --> AU{Enough space?}
+  AU -->|No| AV[Store error, cancel context,<br/>leave sources in place]
+  AU -->|Yes| AW[Process batch serially]
+  AS -->|No| AW
+
+  AW --> AX[Process next FileJob]
+  AX --> AY{Backup enabled<br/>for job?}
+  AY -->|Yes| AZ[Build backup path and copy with retry]
+  AZ -->|Fail| BA[Log error<br/>do not delete source]
+  AZ -->|Success| BB[Delete source file]
+  AY -->|No| BB
+  BB --> BC[Increment counts and processed jobs]
+  BA --> BC
+  BC --> BD{More jobs in batch?}
+  BD -->|Yes| AX
+  BD -->|No and input open| BE[Accept next batch]
+  BE --> AO
+  BD -->|No and input closed| BI[Wait for processor]
+
+  AJ --> BF[Walkers finished]
+  BF --> BG[Close job input]
+  BG --> AP
+  AV --> BI
+  BI --> BJ[Log per-path totals]
+  BJ --> BK[Prune old logs]
+  BK --> BL[Exit]
 ```

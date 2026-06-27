@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"file-maintenance/internal/types"
 )
 
 // Platform implements platform.Platform for macOS.
@@ -19,6 +21,13 @@ type Platform struct{}
 // Unlike Windows, macOS does not currently provide an interactive setup wizard.
 // Returning false for a missing config keeps startup fail-safe and avoids any
 // deletion work before the user has explicitly configured the tool.
+
+// RunSetup is not implemented on macOS. Returning SetupActionCancelled keeps
+// default startup safe on platforms without a GUI configuration flow.
+func (Platform) RunSetup(configDir string, exeDir string) (types.SetupAction, error) {
+	return types.SetupActionCancelled, fmt.Errorf("setup wizard is not implemented for this platform")
+}
+
 func (Platform) EnsureConfig(configDir string, exeDir string) (bool, error) {
 	configFile := filepath.Join(configDir, "config.ini")
 	_, err := os.Stat(configFile)

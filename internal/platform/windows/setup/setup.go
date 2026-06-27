@@ -4,6 +4,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"file-maintenance/internal/types"
+)
+
+const (
+	setupExitSaved       = 0
+	setupExitCancelled   = 1
+	setupExitSavedAndRun = 2
 )
 
 // ConfigExists checks if the configuration file exists in the given config directory.
@@ -17,57 +25,63 @@ func ConfigExists(configDir string) bool {
 	return err == nil
 }
 
+// SetupActionFromExitCode maps setup.ps1 exit codes to app-level setup actions.
+func SetupActionFromExitCode(exitCode int) (types.SetupAction, bool) {
+	switch exitCode {
+	case setupExitSaved:
+		return types.SetupActionSaved, true
+	case setupExitCancelled:
+		return types.SetupActionCancelled, true
+	case setupExitSavedAndRun:
+		return types.SetupActionSavedAndRun, true
+	default:
+		return types.SetupActionCancelled, false
+	}
+}
+
 // LaunchSetupWizard launches the PowerShell GUI setup wizard.
 //
 // The setup wizard will:
 // - Guide the user through configuring backup location, paths to clean, and other settings
 // - Create the config.ini file in the specified config directory
-//
-// Parameters:
-//   - configDir: The directory where config.ini will be created
-//   - exeDir: The directory containing the running executable (for locating setup.ps1)
-//
-// Returns:
-//   - error if the setup wizard fails to launch
-func LaunchSetupWizard(configDir, exeDir string) error {
+// - Return whether the user selected Cancel, Save & Close, or Save & Run
+func LaunchSetupWizard(configDir, exeDir string) (types.SetupAction, error) {
 	return LaunchEmbeddedSetup(configDir, exeDir)
+}
+
+// RunSetup launches the setup wizard regardless of whether config.ini already exists.
+func RunSetup(configDir, exeDir string) (types.SetupAction, error) {
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return types.SetupActionCancelled, fmt.Errorf("failed to create config directory: %w", err)
+	}
+
+	fmt.Println("Opening setup wizard...")
+	return LaunchSetupWizard(configDir, exeDir)
 }
 
 // EnsureConfig checks if configuration exists and launches the setup wizard if not.
 //
-// Parameters:
-//   - configDir: The directory where config.ini should be located
-//   - exeDir: The directory containing the running executable
-//
-// Returns:
-//   - true if configuration now exists (either it did, or setup was completed successfully)
-//   - false if setup was cancelled or failed
-//   - error if there was an error checking or creating configuration
+// This function is kept for compatibility. The current main flow opens setup by
+// default and requires -run for background maintenance.
 func EnsureConfig(configDir, exeDir string) (bool, error) {
-	// Ensure config directory exists
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return false, fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	// Check if config already exists
 	if ConfigExists(configDir) {
 		return true, nil
 	}
 
-	// Config doesn't exist, launch setup wizard
 	fmt.Println("No configuration found. Launching setup wizard...")
-	fmt.Println("Please configure your settings in the GUI window.")
-
-	if err := LaunchSetupWizard(configDir, exeDir); err != nil {
+	action, err := LaunchSetupWizard(configDir, exeDir)
+	if err != nil {
 		return false, err
 	}
-
-	// Check if config was created
-	if ConfigExists(configDir) {
-		return true, nil
+	if action == types.SetupActionCancelled {
+		return false, nil
 	}
 
-	return false, nil
+	return ConfigExists(configDir), nil
 }
 
 // GetConfigPath returns the full path to the config.ini file.

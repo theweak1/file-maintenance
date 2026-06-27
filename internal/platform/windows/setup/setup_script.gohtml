@@ -16,7 +16,7 @@ Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "File Maintenance Tool - Setup Wizard"
-$form.Size = New-Object System.Drawing.Size(750, 680)
+$form.Size = New-Object System.Drawing.Size(750, 700)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -289,7 +289,7 @@ $cooldownLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $advancedPanel.Controls.Add($cooldownLabel)
 
 $cooldownNumeric = New-Object System.Windows.Forms.NumericUpDown
-$cooldownNumeric.Location = New-Object System.Drawing.Size(630, 35)
+$cooldownNumeric.Location = New-Object System.Drawing.Point(630, 35)
 $cooldownNumeric.Size = New-Object System.Drawing.Size(60, 25)
 $cooldownNumeric.Minimum = 0
 $cooldownNumeric.Maximum = 5000
@@ -321,7 +321,7 @@ $maxRuntimeLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $advancedPanel.Controls.Add($maxRuntimeLabel)
 
 $maxRuntimeNumeric = New-Object System.Windows.Forms.NumericUpDown
-$maxRuntimeNumeric.Location = New-Object System.Drawing.Size(400, 38)
+$maxRuntimeNumeric.Location = New-Object System.Drawing.Point(400, 38)
 $maxRuntimeNumeric.Size = New-Object System.Drawing.Size(70, 25)
 $maxRuntimeNumeric.Minimum = 0
 $maxRuntimeNumeric.Maximum = 1440
@@ -338,41 +338,25 @@ $advancedPanel.Controls.Add($noBackupCheck)
 
 $advancedCheck.Add_CheckedChanged({
     $advancedPanel.Visible = $advancedCheck.Checked
-    $form.Size = New-Object System.Drawing.Size(750, 680)
+    $form.Size = New-Object System.Drawing.Size(750, 700)
 })
 
 # Buttons
-$cancelBtn = New-Object System.Windows.Forms.Button
-$cancelBtn.Location = New-Object System.Drawing.Point(380, 610)
-$cancelBtn.Size = New-Object System.Drawing.Size(120, 40)
-$cancelBtn.Text = "Cancel"
-$cancelBtn.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-$cancelBtn.DialogResult = "Cancel"
-$form.Controls.Add($cancelBtn)
+$script:SetupExitCode = 1
 
-$saveBtn = New-Object System.Windows.Forms.Button
-$saveBtn.Location = New-Object System.Drawing.Point(510, 610)
-$saveBtn.Size = New-Object System.Drawing.Size(180, 40)
-$saveBtn.Text = "Save & Exit"
-$saveBtn.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$saveBtn.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
-$saveBtn.ForeColor = [System.Drawing.Color]::White
-$saveBtn.FlatStyle = "Flat"
-$form.Controls.Add($saveBtn)
-
-$saveBtn.Add_Click({
+function Save-Configuration {
     if ([string]::IsNullOrWhiteSpace($backupTextBox.Text)) {
         [System.Windows.Forms.MessageBox]::Show("Please specify a backup location.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-        return
+        return $false
     }
     
     if ($script:Paths.Count -eq 0) {
         [System.Windows.Forms.MessageBox]::Show("Please add at least one path.", "Validation Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning)
-        return
+        return $false
     }
     
     # Always validate backup destination (even if all paths have backup disabled)
-    # This ensures the backup location is accessible for future runs
+    # This ensures the backup location is accessible for future runs.
     $backupPath = $backupTextBox.Text.Trim()
     $backupPath = $backupPath.TrimEnd('\')
     
@@ -380,7 +364,7 @@ $saveBtn.Add_Click({
     $errorMessage = ""
     
     if (Test-Path $backupPath) {
-        # Path exists, verify we can write to it
+        # Path exists, verify we can write to it.
         $testFile = Join-Path $backupPath ".write_test_$(Get-Random).tmp"
         try {
             [System.IO.File]::WriteAllText($testFile, "test")
@@ -391,7 +375,7 @@ $saveBtn.Add_Click({
             $errorMessage = "Cannot write to backup location:`n$backupPath`n`nPlease check permissions."
         }
     } else {
-        # Try to create it to verify the parent is accessible
+        # Try to create it to verify the parent is accessible.
         try {
             New-Item -ItemType Directory -Path $backupPath -Force | Out-Null
             $pathValid = $true
@@ -403,16 +387,16 @@ $saveBtn.Add_Click({
     
     if (-not $pathValid) {
         [System.Windows.Forms.MessageBox]::Show($errorMessage, "Backup Location Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
-        return
+        return $false
     }
     
     try {
-        $walkers = if ($advancedCheck.Checked) { $walkersNumeric.Value } else { 1 }
-        $queueSize = if ($advancedCheck.Checked) { $queueNumeric.Value } else { 300 }
-        $retries = if ($advancedCheck.Checked) { $retriesNumeric.Value } else { 2 }
-        $cooldown = if ($advancedCheck.Checked) { $cooldownNumeric.Value } else { 0 }
-        $maxFiles = if ($advancedCheck.Checked) { $maxFilesNumeric.Value } else { 0 }
-        $maxRuntime = if ($advancedCheck.Checked) { $maxRuntimeNumeric.Value } else { 30 }
+        $walkers = if ($advancedCheck.Checked) { [int]$walkersNumeric.Value } else { 1 }
+        $queueSize = if ($advancedCheck.Checked) { [int]$queueNumeric.Value } else { 300 }
+        $retries = if ($advancedCheck.Checked) { [int]$retriesNumeric.Value } else { 2 }
+        $cooldown = if ($advancedCheck.Checked) { "$([int]$cooldownNumeric.Value)ms" } else { "0" }
+        $maxFiles = if ($advancedCheck.Checked) { [int]$maxFilesNumeric.Value } else { 0 }
+        $maxRuntime = if ($advancedCheck.Checked) { "$([int]$maxRuntimeNumeric.Value)m" } else { "30m" }
         $noBackup = if ($advancedCheck.Checked) { $noBackupCheck.Checked } else { $false }
         
         $pathsContent = ""
@@ -454,16 +438,61 @@ max-runtime=$maxRuntime
         [System.IO.File]::WriteAllText($configFile, $configContent, [System.Text.Encoding]::UTF8)
         
         [System.Windows.Forms.MessageBox]::Show("Configuration saved to:`n$configFile", "Success", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information)
-        $form.DialogResult = "OK"
-        $form.Close()
+        return $true
     }
     catch {
         [System.Windows.Forms.MessageBox]::Show("Failed: $_", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return $false
+    }
+}
+
+$cancelBtn = New-Object System.Windows.Forms.Button
+$cancelBtn.Location = New-Object System.Drawing.Point(300, 610)
+$cancelBtn.Size = New-Object System.Drawing.Size(100, 40)
+$cancelBtn.Text = "Cancel"
+$cancelBtn.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+$cancelBtn.DialogResult = "Cancel"
+$form.Controls.Add($cancelBtn)
+
+$saveCloseBtn = New-Object System.Windows.Forms.Button
+$saveCloseBtn.Location = New-Object System.Drawing.Point(410, 610)
+$saveCloseBtn.Size = New-Object System.Drawing.Size(140, 40)
+$saveCloseBtn.Text = "Save && Close"
+$saveCloseBtn.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+$saveCloseBtn.BackColor = [System.Drawing.Color]::FromArgb(90, 90, 90)
+$saveCloseBtn.ForeColor = [System.Drawing.Color]::White
+$saveCloseBtn.FlatStyle = "Flat"
+$form.Controls.Add($saveCloseBtn)
+
+$saveRunBtn = New-Object System.Windows.Forms.Button
+$saveRunBtn.Location = New-Object System.Drawing.Point(560, 610)
+$saveRunBtn.Size = New-Object System.Drawing.Size(160, 40)
+$saveRunBtn.Text = "Save && Run"
+$saveRunBtn.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
+$saveRunBtn.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
+$saveRunBtn.ForeColor = [System.Drawing.Color]::White
+$saveRunBtn.FlatStyle = "Flat"
+$form.Controls.Add($saveRunBtn)
+
+$saveCloseBtn.Add_Click({
+    if (Save-Configuration) {
+        $script:SetupExitCode = 0
+        $form.DialogResult = "OK"
+        $form.Close()
+    }
+})
+
+$saveRunBtn.Add_Click({
+    if (Save-Configuration) {
+        $script:SetupExitCode = 2
+        $form.DialogResult = "OK"
+        $form.Close()
     }
 })
 
 $cancelBtn.Add_Click({
     if ([System.Windows.Forms.MessageBox]::Show("Cancel setup?", "Confirm", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question) -eq "Yes") {
+        $script:SetupExitCode = 1
         $form.DialogResult = "Cancel"
         $form.Close()
     }
@@ -472,7 +501,12 @@ $cancelBtn.Add_Click({
 $result = $form.ShowDialog()
 
 if ($result -eq "OK") {
-    Write-Host "Setup completed!"
-} else {
-    exit 1
+    if ($script:SetupExitCode -eq 2) {
+        Write-Host "Setup saved. Save & Run selected."
+        exit 2
+    }
+    Write-Host "Setup saved."
+    exit 0
 }
+
+exit 1

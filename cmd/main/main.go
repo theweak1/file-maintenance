@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -20,26 +21,11 @@ const appName = "file-maintenance"
 func main() {
 	// -----------------------------------------------------------------------------
 	// Resolve the current platform implementation.
-	//
-	// Platform owns OS-specific behavior such as:
-	// - native critical notifications
-	// - first-run configuration setup behavior
-	// - optional OS-conventional config/log path resolution
-	//
-	// The application currently uses portable defaults for config and logs
-	// (<exe>/config and <exe>/logs), while still routing setup and notifications
-	// through the active platform implementation.
 	// -----------------------------------------------------------------------------
 	pf := platform.Current()
 
 	// -----------------------------------------------------------------------------
 	// Resolve application root (directory of the running executable).
-	//
-	// Why:
-	// - The default config and log directories are intentionally located beside the
-	//   executable to support portable deployments and predictable Task Scheduler use.
-	// - If ExeDir() fails in an unusual launch context, fall back to the current
-	//   working directory rather than exiting before logging can be initialized.
 	// -----------------------------------------------------------------------------
 	root, err := utils.ExeDir()
 	if err != nil {
@@ -48,71 +34,54 @@ func main() {
 
 	// -----------------------------------------------------------------------------
 	// Default locations relative to the app root.
-	//
-	// - config/ holds config.ini, logging.json, etc.
-	// - logs/ is where the logger writes log files (unless -no-logs is set)
 	// -----------------------------------------------------------------------------
-
-	// NOTICE: platform.DefaultConfigDir() and DefaultLogDir() use OS-specific logic to determine where config and logs should go. For example:
-	// - On Windows, config might go to %APPDATA%\file-maintenance\config.ini and logs to %LOCALAPPDATA%\file-maintenance\logs\
-	// - On Linux, config might go to ~/.config/file-maintenance/config.ini and logs to ~/.cache/file-maintenance/logs/
-	// - On macOS, config might go to ~/Library/Application Support/file-maintenance/config.ini and logs to ~/Library/Caches/file-maintenance/logs/
-	// If you want that behavior uncomment the lines below and remove the fallbacks that point to the app root. The platform defaults are more in line with user expectations and OS conventions, but the app root fallback can be useful for portable use cases (e.g., running from a USB drive).
-
-	// -----------------------------------------------------------------------------
-	//  Resolve platform-specific default config and log directories, with fallbacks to app root.
-	// defaultCfgDir, err := pf.DefaultConfigDir(appName)
-	// if err != nil {
-	// 	defaultCfgDir = filepath.Join(root, "config")
-	// }
-
-	// defaultLogDir, err := pf.DefaultLogDir(appName)
-	// if err != nil {
-	// 	defaultLogDir = filepath.Join(root, "logs")
-	// }
-
 	defaultCfgDir := filepath.Join(root, "config")
 	defaultLogDir := filepath.Join(root, "logs")
+	defaultRuntime := types.DefaultRuntimeConfig()
 
 	// -----------------------------------------------------------------------------
 	// CLI flags
 	//
-	// Keep flags grouped and explicit. This tool is commonly run unattended
-	// (Task Scheduler), so predictable flags + safe defaults matter.
+	// Mode flags:
+	// - No -run flag: open setup/configuration UI and do not perform maintenance
+	//   unless the user chooses Save & Run in the UI.
+	// - -run: execute the background backup/delete process.
+	// - -setup: explicit alias for setup/configuration mode.
 	//
-	// Resource-control flags:
-	// - walkers / queue-size: bound concurrency and memory usage while scanning.
-	// - max-files / max-runtime: hard caps to prevent runaway work.
-	// - cooldown: optional pacing between file operations (SMB-friendly).
-	// - retries: tolerate transient copy failures (e.g., network share hiccups).
+	// Runtime flags only override config.ini when they are explicitly passed.
 	// -----------------------------------------------------------------------------
 	var (
+		runMode   = flag.Bool("run", false, "Run the background backup/delete maintenance process")
+		setupMode = flag.Bool("setup", false, "Open the setup/configuration UI and exit unless Save & Run is selected")
+
 		// Retention policy for candidate files (only files older than this are processed).
-		days = flag.Int("days", 7, "Number of days to retain files")
+		days = flag.Int("days", defaultRuntime.Days, "Number of days to retain files")
 
 		// Retention policy for *log files* (housekeeping).
-		logRetention = flag.Int("log-retention", 30, "Number of days to retain log files")
+		logRetention = flag.Int("log-retention", defaultRuntime.LogRetention, "Number of days to retain log files")
 
 		// Config directory path (defaults next to the binary).
 		configDir = flag.String("config-dir", defaultCfgDir, "Config directory (defaults next to the binary)")
 
-		// Logging controls
+		// Logging controls.
 		logDir = flag.String("log-dir", defaultLogDir, "Log directory (defaults next to the binary)")
 		noLogs = flag.Bool("no-logs", false, "If set, logging is disabled and output is sent to stdout")
 
-		// Resource controls used by maintenance.Worker
-		walkers      = flag.Int("walkers", 1, "Number of concurrent folder walkers")
-		queueSize    = flag.Int("queue-size", 300, "Size of the buffered jobs channel")
-		maxFiles     = flag.Int("max-files", 0, "Maximum number of files to process (0 = unlimited)")
-		maxRuntime   = flag.Duration("max-runtime", 30*time.Minute, "Maximum runtime duration (0 = unlimited)")
-		cooldown     = flag.Duration("cooldown", 0, "Cooldown duration after each file operation")
-		retries      = flag.Int("retries", 2, "Number of copy retries on failure")
+		// Resource controls used by maintenance.Worker.
+		walkers    = flag.Int("walkers", defaultRuntime.Walkers, "Number of concurrent folder walkers")
+		queueSize  = flag.Int("queue-size", defaultRuntime.QueueSize, "Maximum jobs collected into one worker batch")
+		maxFiles   = flag.Int("max-files", defaultRuntime.MaxFiles, "Maximum number of files to process (0 = unlimited)")
+		maxRuntime = flag.Duration("max-runtime", defaultRuntime.MaxRuntime, "Maximum runtime duration (0 = unlimited)")
+		cooldown   = flag.Duration("cooldown", defaultRuntime.Cooldown, "Cooldown duration after each file operation")
+		retries    = flag.Int("retries", defaultRuntime.Retries, "Number of copy retries on failure")
+		noBackup   = flag.Bool("no-backup", defaultRuntime.NoBackup, "Disable all backups for this run and delete eligible files directly")
+
 		shortVersion = flag.Bool("version", false, "Print version and exit")
 		longVersion  = flag.Bool("long-version", false, "Print long version and exit")
 	)
 
-	// Parse CLI flags once at process startup.
 	flag.Parse()
+	seenFlags := explicitFlags()
 
 	if *shortVersion {
 		fmt.Printf("file-maintenance %s\n", version.ShortVersion())
@@ -123,43 +92,26 @@ func main() {
 		fmt.Printf("file-maintenance %s\n", version.LongVersion())
 		return
 	}
+
+	cliRuntime := runtimeOverridesFromFlags(seenFlags, *days, *logRetention, *walkers, *queueSize, *maxFiles, *maxRuntime, *cooldown, *retries, *noBackup)
+
 	// -----------------------------------------------------------------------------
-	// Build AppConfig (the single configuration object passed into internal/app).
+	// Build the base AppConfig passed into internal/app.
 	//
-	// Notes:
-	// - BackupDir is intentionally left empty here; app.Run() resolves it from
-	//   config files (e.g., config/config.ini) so scheduled runs don't require
-	//   passing a long path via CLI flags.
-	// - LogSettings control whether logs are written to disk or printed to stdout.
+	// Runtime values are finalized inside app.Run() using:
+	// defaults -> config.ini -> explicit CLI overrides.
 	// -----------------------------------------------------------------------------
-	cfg := types.AppConfig{
-		Days:         *days,
-		ConfigDir:    *configDir,
-		LogRetention: *logRetention,
-
-		// Read from config/config.ini inside app.Run().
+	cfg := types.ApplyRuntimeConfig(types.AppConfig{
+		ConfigDir: *configDir,
 		BackupDir: "",
-
 		LogSettings: logging.LogSettings{
 			NoLogs: *noLogs,
 			LogDir: *logDir,
 		},
-
-		// Resource controls enforced by maintenance.Worker()
-		Walkers:    *walkers,
-		QueueSize:  *queueSize,
-		MaxFiles:   *maxFiles,
-		MaxRuntime: *maxRuntime,
-		Cooldown:   *cooldown,
-		Retries:    *retries,
-	}
+	}, defaultRuntime)
 
 	// -----------------------------------------------------------------------------
 	// Initialize the logger once.
-	//
-	// Why:
-	// - Worker may use multiple goroutines; they all share one logger instance.
-	// - If logger init fails, we can't reliably log, so we fall back to stderr.
 	// -----------------------------------------------------------------------------
 	log, err := logging.New(cfg.ConfigDir, cfg.LogSettings)
 	if err != nil {
@@ -168,43 +120,130 @@ func main() {
 	}
 
 	log.Infof("file-maintenance version: %s", version.ShortVersion())
-	// If you later add Close() (flush buffers / close handles), you can defer it here:
-	// defer log.Close()
 
 	// -----------------------------------------------------------------------------
-	// Ensure configuration exists before running maintenance.
+	// Setup-first mode.
 	//
-	// Windows behavior:
-	// - If <config-dir>/config.ini is missing, launch the embedded PowerShell setup
-	//   wizard and continue only if the wizard creates the file successfully.
-	//
-	// Linux/macOS behavior:
-	// - No GUI wizard is launched. The platform returns false if config.ini is
-	//   missing so the application exits safely without processing files.
+	// A plain double-click or plain CLI launch opens setup/configuration. This keeps
+	// destructive backup/delete work behind an explicit -run flag, unless the user
+	// chooses Save & Run from the Windows setup UI.
 	// -----------------------------------------------------------------------------
-	configExists, err := pf.EnsureConfig(cfg.ConfigDir, root)
-	if err != nil {
-		log.Errorf("failed to ensure config: %v", err)
-		os.Exit(1)
+	if !*runMode || *setupMode {
+		action, err := pf.RunSetup(cfg.ConfigDir, root)
+		if err != nil {
+			log.Errorf("setup failed: %v", err)
+			fmt.Fprintf(os.Stderr, "setup failed: %v\n", err)
+			os.Exit(1)
+		}
+
+		switch action {
+		case types.SetupActionSavedAndRun:
+			log.Info("Setup saved. Continuing with maintenance because Save & Run was selected.")
+		case types.SetupActionSaved:
+			log.Info("Setup saved. Exiting without running maintenance.")
+			return
+		case types.SetupActionCancelled:
+			log.Info("Setup was cancelled. Exiting without running maintenance.")
+			os.Exit(1)
+		default:
+			log.Errorf("unknown setup action: %d", action)
+			os.Exit(1)
+		}
 	}
 
+	// -----------------------------------------------------------------------------
+	// Explicit run mode safety check.
+	//
+	// -run should never unexpectedly open a GUI. If config.ini is missing, fail
+	// clearly so scheduled/background runs do not hang waiting for user input.
+	// -----------------------------------------------------------------------------
+	configExists, err := configFileExists(cfg.ConfigDir)
+	if err != nil {
+		log.Errorf("failed to check config.ini: %v", err)
+		os.Exit(1)
+	}
 	if !configExists {
-		log.Info("Setup was cancelled or failed. Please run the tool again after configuring.")
+		log.Errorf("config.ini not found in %s. Run without -run to open setup.", cfg.ConfigDir)
+		fmt.Fprintf(os.Stderr, "config.ini not found in %s. Run without -run to open setup.\n", cfg.ConfigDir)
 		os.Exit(1)
 	}
 
 	// -----------------------------------------------------------------------------
 	// Run the application.
-	//
-	// app.Run() is responsible for:
-	// - reading config (paths list, backup root, logging settings)
-	// - pruning old logs (if logging enabled)
-	// - calling maintenance.Worker() to process eligible files
 	// -----------------------------------------------------------------------------
-	if err := app.Run(cfg, log, pf); err != nil {
-		// We already have a logger, so report the error there as well.
+	if err := app.Run(cfg, log, pf, cliRuntime); err != nil {
 		log.Errorf("internal exited with error: %v", err)
 		fmt.Fprintf(os.Stderr, "internal exited with error: %v\n", err)
 		os.Exit(1)
 	}
 }
+
+func explicitFlags() map[string]bool {
+	seen := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		seen[f.Name] = true
+	})
+	return seen
+}
+
+func runtimeOverridesFromFlags(
+	seen map[string]bool,
+	days int,
+	logRetention int,
+	walkers int,
+	queueSize int,
+	maxFiles int,
+	maxRuntime time.Duration,
+	cooldown time.Duration,
+	retries int,
+	noBackup bool,
+) types.RuntimeConfigOverrides {
+	var overrides types.RuntimeConfigOverrides
+
+	if seen["days"] {
+		overrides.Days = intPtr(days)
+	}
+	if seen["log-retention"] {
+		overrides.LogRetention = intPtr(logRetention)
+	}
+	if seen["walkers"] {
+		overrides.Walkers = intPtr(walkers)
+	}
+	if seen["queue-size"] {
+		overrides.QueueSize = intPtr(queueSize)
+	}
+	if seen["max-files"] {
+		overrides.MaxFiles = intPtr(maxFiles)
+	}
+	if seen["max-runtime"] {
+		overrides.MaxRuntime = durationPtr(maxRuntime)
+	}
+	if seen["cooldown"] {
+		overrides.Cooldown = durationPtr(cooldown)
+	}
+	if seen["retries"] {
+		overrides.Retries = intPtr(retries)
+	}
+	if seen["no-backup"] {
+		overrides.NoBackup = boolPtr(noBackup)
+	}
+
+	return overrides
+}
+
+func configFileExists(configDir string) (bool, error) {
+	_, err := os.Stat(filepath.Join(configDir, "config.ini"))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func intPtr(v int) *int { return &v }
+
+func boolPtr(v bool) *bool { return &v }
+
+func durationPtr(v time.Duration) *time.Duration { return &v }

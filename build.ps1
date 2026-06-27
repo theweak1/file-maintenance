@@ -88,6 +88,7 @@ function Run() {
 	if (-not $NoLogs) { Ensure-Dir $logDir }
 
 	$args = @(
+		"-run",
 		"-days", "$Days",
 		"-config-dir", $configDir
 	)
@@ -112,11 +113,9 @@ function Clean {
 }
 
 function Smoke {
-	Require-File (Join-Path $configDir "folders.txt")
-	Require-File (Join-Path $configDir "backup.txt")
-	Require-File (Join-Path $configDir "logging.json")
+	Require-File (Join-Path $configDir "config.ini")
 
-	Write-Host "Smoke test: build + run -no-logs -days 0"
+	Write-Host "Smoke test: build + run -run -no-logs -days 0"
 	$script:Days = 0
 	Run -NoLogs
 }
